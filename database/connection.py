@@ -7,6 +7,7 @@ owns the transaction scope.
 
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -58,3 +59,20 @@ def write_spot_prices(conn: sqlite3.Connection, date: str,
         "VALUES (?, ?, ?, ?);",
         (date, gold, silver, now_utc().isoformat()),
     )
+
+
+def log_transaction(conn: sqlite3.Connection, action_type: str, metal: str,
+                    execution_rate_myr: float, mass_grams: float,
+                    fiat_total_myr: float, timestamp: str | None = None) -> str:
+    """Insert one ledger row; return its generated UUID."""
+    tx_id = str(uuid.uuid4())
+    ts = timestamp or now_utc().isoformat()
+    conn.execute(
+        "INSERT INTO transactions "
+        "(id, timestamp, action_type, metal, execution_rate_myr, "
+        " mass_grams, fiat_total_myr) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?);",
+        (tx_id, ts, action_type, metal,
+         execution_rate_myr, mass_grams, fiat_total_myr),
+    )
+    return tx_id
