@@ -100,3 +100,51 @@ def fetch_historical_matrix(conn: sqlite3.Connection,
     rows = conn.execute(query, params).fetchall()
     df = pd.DataFrame([dict(r) for r in rows], columns=_MATRIX_COLUMNS)
     return df.sort_values("date").reset_index(drop=True)
+
+
+DEFAULT_SETTINGS: dict[str, str] = {
+    # Spread engine (absolute MYR-per-gram fallbacks; alpha/tau in days)
+    "default_buy_spread": "0.0",
+    "default_sell_spread": "0.0",
+    "spread_recency_alpha": "30",
+    "spread_staleness_tau": "30",
+    # Indicators
+    "rsi_period": "14",
+    "rsi_oversold": "30",
+    "rsi_overbought": "70",
+    "vol_band_deviations": "2",
+    "gsr_band_deviations": "2",
+    # Signal fusion
+    "quant_vote_threshold": "2",
+    # Sentiment
+    "sentiment_max_age_days": "2",
+    # Locale
+    "BASE_CURRENCY": "MYR",
+    "TIMEZONE": "Asia/Kuala_Lumpur",
+}
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value) -> None:
+    """Upsert a single config key (value stored as text)."""
+    conn.execute(
+        "INSERT OR REPLACE INTO system_settings (config_key, config_value) "
+        "VALUES (?, ?);",
+        (key, str(value)),
+    )
+
+
+def get_setting(conn: sqlite3.Connection, key: str,
+                default: str | None = None) -> str | None:
+    """Return a config value, or `default` if the key is absent."""
+    row = conn.execute(
+        "SELECT config_value FROM system_settings WHERE config_key=?;",
+        (key,),
+    ).fetchone()
+    return row[0] if row is not None else default
+
+
+def seed_default_settings(conn: sqlite3.Connection) -> None:
+    """Insert each default only if its key is absent (never overwrites)."""
+    for key, value in DEFAULT_SETTINGS.items():
+        if get_setting(conn, key) is None:
+            set_setting(conn, key, value)
