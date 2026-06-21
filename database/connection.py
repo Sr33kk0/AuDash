@@ -5,6 +5,7 @@ schema idempotently. DAO functions accept an open connection so the caller
 owns the transaction scope.
 """
 
+import json
 import os
 import sqlite3
 import uuid
@@ -148,3 +149,32 @@ def seed_default_settings(conn: sqlite3.Connection) -> None:
     for key, value in DEFAULT_SETTINGS.items():
         if get_setting(conn, key) is None:
             set_setting(conn, key, value)
+
+
+def write_sentiment_snapshot(conn: sqlite3.Connection, date: str,
+                             sentiment_score: float, dominant_risk_factor: str,
+                             analytical_summary: str,
+                             source_headlines: list[str]) -> None:
+    """Upsert a daily sentiment snapshot (headlines stored as JSON)."""
+    conn.execute(
+        "INSERT OR REPLACE INTO sentiment_snapshots "
+        "(date, sentiment_score, dominant_risk_factor, analytical_summary, "
+        " source_headlines, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?);",
+        (date, sentiment_score, dominant_risk_factor, analytical_summary,
+         json.dumps(source_headlines), now_utc().isoformat()),
+    )
+
+
+def fetch_latest_sentiment(conn: sqlite3.Connection) -> dict | None:
+    """Return the most recent sentiment snapshot as a dict, or None."""
+    row = conn.execute(
+        "SELECT * FROM sentiment_snapshots ORDER BY date DESC LIMIT 1;"
+    ).fetchone()
+    if row is None:
+        return None
+    snap = dict(row)
+    snap["source_headlines"] = (
+        json.loads(snap["source_headlines"]) if snap["source_headlines"] else []
+    )
+    return snap
