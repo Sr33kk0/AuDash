@@ -2,8 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from analytics.quantitative import compute_gold_silver_ratio
-from analytics.quantitative import compute_relative_strength_index
+from analytics.quantitative import (
+    compute_gold_silver_ratio,
+    compute_relative_strength_index,
+    compute_volatility_bands,
+)
 
 
 def test_gsr_elementwise_ratio():
@@ -43,9 +46,6 @@ def test_rsi_bounded_and_length_preserved():
     valid = rsi.dropna()
     assert (valid >= 0.0).all()
     assert (valid <= 100.0).all()
-
-
-from analytics.quantitative import compute_volatility_bands
 
 
 def test_bands_constant_series_collapse():
