@@ -22,3 +22,37 @@ class BullionFetchError(Exception):
 def convert_oz_to_grams(oz_rate: float) -> float:
     """Convert a per-troy-ounce rate to a per-gram rate."""
     return oz_rate / GRAMS_PER_TROY_OZ
+
+
+def _invert_rate(rate: float | None, symbol: str) -> float:
+    """Invert a base->symbol quote into a symbol price; guard missing/zero."""
+    if not rate:  # None or 0 / 0.0
+        raise BullionFetchError(f"Missing or zero rate for {symbol}")
+    return 1.0 / rate
+
+
+def fetch_raw_bullion_rates(api_key: str, *, base: str = "MYR",
+                            symbols: tuple[str, ...] = ("XAU", "XAG"),
+                            timeout: float = 10.0) -> dict[str, float]:
+    """Fetch bullion rates and return MYR-per-troy-ounce for gold and silver.
+
+    Raises BullionFetchError on transport, decode, or validation failure.
+    """
+    params = {"api_key": api_key, "base": base, "symbols": ",".join(symbols)}
+    try:
+        resp = requests.get(_API_URL, params=params, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as exc:
+        raise BullionFetchError(f"HTTP request failed: {exc}") from exc
+    except ValueError as exc:  # json decode error
+        raise BullionFetchError(f"Invalid JSON payload: {exc}") from exc
+
+    if not data.get("success", False):
+        raise BullionFetchError(f"API returned unsuccessful payload: {data}")
+
+    rates = data.get("rates") or {}
+    return {
+        "gold_rate_per_oz": _invert_rate(rates.get("XAU"), "XAU"),
+        "silver_rate_per_oz": _invert_rate(rates.get("XAG"), "XAG"),
+    }
