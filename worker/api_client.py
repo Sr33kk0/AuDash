@@ -25,9 +25,9 @@ def convert_oz_to_grams(oz_rate: float) -> float:
 
 
 def _invert_rate(rate: float | None, symbol: str) -> float:
-    """Invert a base->symbol quote into a symbol price; guard missing/zero."""
-    if not rate:  # None or 0 / 0.0
-        raise BullionFetchError(f"Missing or zero rate for {symbol}")
+    """Invert a base->symbol quote into a symbol price; reject missing/non-positive."""
+    if rate is None or rate <= 0:
+        raise BullionFetchError(f"Missing or non-positive rate for {symbol}")
     return 1.0 / rate
 
 
