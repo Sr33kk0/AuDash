@@ -6,6 +6,8 @@ Network failures and malformed payloads raise BullionFetchError so the daemon
 loop can swallow them without dying.
 """
 
+import sqlite3
+
 import requests
 
 from database.connection import write_spot_prices
@@ -56,3 +58,17 @@ def fetch_raw_bullion_rates(api_key: str, *, base: str = "MYR",
         "gold_rate_per_oz": _invert_rate(rates.get("XAU"), "XAU"),
         "silver_rate_per_oz": _invert_rate(rates.get("XAG"), "XAG"),
     }
+
+
+def execute_ingestion_pipeline(conn: sqlite3.Connection, api_key: str, *,
+                               date: str | None = None) -> dict[str, float]:
+    """Fetch, validate, and persist today's spot prices; return the rates."""
+    rates = fetch_raw_bullion_rates(api_key)
+    gold = rates["gold_rate_per_oz"]
+    silver = rates["silver_rate_per_oz"]
+    if gold <= 0 or silver <= 0:
+        raise BullionFetchError(
+            f"Non-positive rates: gold={gold}, silver={silver}")
+    day = date or now_utc().date().isoformat()
+    write_spot_prices(conn, day, gold, silver)
+    return rates
