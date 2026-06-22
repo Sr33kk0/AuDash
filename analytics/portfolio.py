@@ -43,3 +43,9 @@ def calculate_cost_basis(trades: pd.DataFrame, epsilon: float = 1e-9) -> dict:
         "cost_basis": cost_basis,
         "oversell_flagged": oversell,
     }
+
+
+def evaluate_unrealized_pnl(holding_grams: float, cost_basis: float,
+                            current_sell_rate: float) -> float:
+    """Unrealized PnL at the current sell rate (haircut already in the rate)."""
+    return holding_grams * (current_sell_rate - cost_basis)

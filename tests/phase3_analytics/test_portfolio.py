@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from analytics.portfolio import calculate_cost_basis
+from analytics.portfolio import calculate_cost_basis, evaluate_unrealized_pnl
 
 
 def _trades(rows):
@@ -71,3 +71,15 @@ def test_unsorted_input_is_processed_chronologically():
     res = calculate_cost_basis(trades)
     assert res["holding_grams"] == pytest.approx(5.0)
     assert res["cost_basis"] == pytest.approx(300.0)
+
+
+def test_unrealized_pnl_positive():
+    assert evaluate_unrealized_pnl(20.0, 150.0, 160.0) == pytest.approx(200.0)
+
+
+def test_unrealized_pnl_negative():
+    assert evaluate_unrealized_pnl(20.0, 150.0, 140.0) == pytest.approx(-200.0)
+
+
+def test_unrealized_pnl_zero_holding():
+    assert evaluate_unrealized_pnl(0.0, 150.0, 160.0) == pytest.approx(0.0)
