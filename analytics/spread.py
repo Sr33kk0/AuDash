@@ -35,12 +35,16 @@ def recency_weighted_mean(values, ages_days, alpha_days: float) -> float:
     a = np.asarray(ages_days, dtype=float)
     if v.size == 0:
         raise ValueError("recency_weighted_mean requires at least one value")
+    if alpha_days <= 0:
+        raise ValueError("alpha_days must be positive")
     weights = np.exp(-a / alpha_days)
     return float(np.sum(weights * v) / np.sum(weights))
 
 
 def staleness_weight(latest_age_days: float, tau_days: float) -> float:
     """Decay weight for how stale the latest trade is: exp(-age / tau)."""
+    if tau_days <= 0:
+        raise ValueError("tau_days must be positive")
     return math.exp(-latest_age_days / tau_days)
 
 

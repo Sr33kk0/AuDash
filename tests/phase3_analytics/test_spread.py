@@ -76,3 +76,13 @@ def test_spot_on_or_before_uses_nearest_prior():
     assert spot_on_or_before(spot, "2026-01-02") == pytest.approx(10.0)
     assert spot_on_or_before(spot, "2026-01-03") == pytest.approx(12.0)
     assert spot_on_or_before(spot, "2025-12-31") is None
+
+
+def test_recency_weighted_mean_nonpositive_alpha_raises():
+    with pytest.raises(ValueError):
+        recency_weighted_mean([10.0], [0.0], 0.0)
+
+
+def test_staleness_weight_nonpositive_tau_raises():
+    with pytest.raises(ValueError):
+        staleness_weight(0.0, 0.0)
