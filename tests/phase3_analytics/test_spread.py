@@ -133,6 +133,22 @@ def test_side_spread_stale_trade_blends_toward_fallback():
     # eff = 0.367879*5 + 0.632121*2 = 3.103642
     assert res["staleness_weight"] == pytest.approx(math.exp(-1.0), abs=1e-6)
     assert res["effective_spread"] == pytest.approx(3.103642, abs=1e-4)
+    assert res["derived_spread"] == pytest.approx(5.0)
+    assert res["n_trades"] == 1
+
+
+def test_side_spread_skips_trade_with_no_prior_spot():
+    trades = pd.DataFrame([
+        {"timestamp": "2026-06-20T09:00:00+00:00",
+         "action_type": "BUY", "execution_rate_myr": 105.0},
+    ])  # spot series only has 2026-06-22, so no spot on/before 2026-06-20
+    now = datetime(2026, 6, 22, 9, 0, tzinfo=timezone.utc)
+    res = compute_side_spread(trades, _spot(), "BUY",
+                              fallback=2.0, alpha_days=30.0, tau_days=30.0, now=now)
+    assert res["n_trades"] == 0
+    assert res["derived_spread"] is None
+    assert res["staleness_weight"] == pytest.approx(0.0)
+    assert res["effective_spread"] == pytest.approx(2.0)
 
 
 def test_side_spread_ignores_other_side():
