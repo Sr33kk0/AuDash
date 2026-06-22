@@ -93,3 +93,17 @@ def test_transport_error_raises_bullion_fetch_error(monkeypatch):
     monkeypatch.setattr(api_client.requests, "get", fake_get)
     with pytest.raises(BullionFetchError):
         fetch_raw_bullion_rates("KEY")
+
+
+def test_api_key_not_leaked_in_error(monkeypatch):
+    secret = "SUPERSECRETKEY"
+
+    def fake_get(url, params=None, timeout=None):
+        raise api_client.requests.ConnectionError(
+            f"Max retries exceeded with url: /v1/latest?api_key={secret}&base=MYR")
+
+    monkeypatch.setattr(api_client.requests, "get", fake_get)
+    with pytest.raises(BullionFetchError) as excinfo:
+        fetch_raw_bullion_rates(secret)
+    assert secret not in str(excinfo.value)        # scrubbed
+    assert excinfo.value.__cause__ is None         # chain suppressed (no re-leak via logger.exception)

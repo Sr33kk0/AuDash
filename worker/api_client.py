@@ -46,7 +46,8 @@ def fetch_raw_bullion_rates(api_key: str, *, base: str = "MYR",
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
-        raise BullionFetchError(f"HTTP request failed: {exc}") from exc
+        detail = str(exc).replace(api_key, "***") if api_key else str(exc)
+        raise BullionFetchError(f"HTTP request failed: {detail}") from None
     except ValueError as exc:  # json decode error
         raise BullionFetchError(f"Invalid JSON payload: {exc}") from exc
 

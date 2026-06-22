@@ -22,6 +22,9 @@ WINDOW_HOUR = 17
 WINDOW_MINUTE = 0
 _DEFAULT_TZ = "Asia/Kuala_Lumpur"
 
+# Intra-window retry backoff (seconds) before falling back to the next window.
+RETRY_BACKOFFS_SECONDS = (30.0, 120.0, 480.0)
+
 
 def sleep_until_next_window(now: datetime | None = None,
                             tz_name: str | None = None) -> float:
@@ -32,13 +35,29 @@ def sleep_until_next_window(now: datetime | None = None,
     return (target - now).total_seconds()
 
 
-def run_daily_cycle(conn, api_key: str) -> None:
-    """Run the price-ingestion pipeline, tolerating any single failure."""
-    try:
-        rates = execute_ingestion_pipeline(conn, api_key)
-        logger.info("Price ingestion succeeded: %s", rates)
-    except Exception:
-        logger.exception("Price ingestion failed; daemon continues")
+def run_daily_cycle(conn, api_key: str, *, sleep_fn=time.sleep) -> bool:
+    """Run the price-ingestion pipeline with bounded retry + backoff.
+
+    Retries up to len(RETRY_BACKOFFS_SECONDS) times on failure, sleeping the
+    corresponding backoff between attempts. Never raises. Returns True on
+    success, False if every attempt failed (the daemon then waits for the
+    next window).
+    """
+    total_attempts = len(RETRY_BACKOFFS_SECONDS) + 1
+    for attempt in range(total_attempts):
+        try:
+            rates = execute_ingestion_pipeline(conn, api_key)
+            logger.info("Price ingestion succeeded on attempt %d: %s",
+                        attempt + 1, rates)
+            return True
+        except Exception:
+            logger.exception("Price ingestion failed on attempt %d/%d",
+                             attempt + 1, total_attempts)
+        if attempt < len(RETRY_BACKOFFS_SECONDS):
+            sleep_fn(RETRY_BACKOFFS_SECONDS[attempt])
+    logger.error("Price ingestion failed after %d attempts; waiting for next window",
+                 total_attempts)
+    return False
 
 
 def _require_env(name: str) -> str:
@@ -56,9 +75,12 @@ def initialize_background_daemon(*, max_cycles: int | None = None,
     logger.info("Worker daemon starting")
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
-        with get_db_connection() as conn:
-            seed_default_settings(conn)
-            run_daily_cycle(conn, api_key)
+        try:
+            with get_db_connection() as conn:
+                seed_default_settings(conn)
+                run_daily_cycle(conn, api_key)
+        except Exception:
+            logger.exception("Daily cycle setup failed (DB open/seed); daemon continues")
         sleep_fn(sleep_until_next_window())
         cycles += 1
 
