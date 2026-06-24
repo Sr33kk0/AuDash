@@ -13,7 +13,7 @@ manual st.rerun) advances review -> confirm -> logged.
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import streamlit as st
 
@@ -372,7 +372,8 @@ def render_daily_quotes_form(model: dict) -> None:
 
     metal = st.radio("Metal", ["GOLD", "SILVER"], horizontal=True,
                      key="quote_metal")
-    quote_date = st.date_input("Date", key="quote_date")
+    quote_date = st.date_input("Date", value=date.fromisoformat(model["today"]),
+                              key="quote_date")
     buy_rate = st.number_input(
         "Buy rate · MYR/g", min_value=0.0, value=0.0, step=1.0, format="%.2f",
         key="quote_buy", help="Price you pay to buy (≈ spot + spread).")
