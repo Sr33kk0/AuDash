@@ -1,0 +1,17 @@
+# AuDash — Direction A "Assayer's Terminal" theme base.
+# The fine-grained identity (fonts, verdict hero, metric cards, GSR balance)
+# is layered on top via the injected CSS in ui/theme.py; this sets the chrome
+# Streamlit owns before that CSS loads.
+[theme]
+base = "dark"
+primaryColor = "#C8A24C"
+backgroundColor = "#0E0D0B"
+secondaryBackgroundColor = "#1A1815"
+textColor = "#EDE7D9"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

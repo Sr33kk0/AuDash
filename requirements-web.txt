@@ -1,0 +1,11 @@
+# Streamlit UI container (Phase 5/6).
+streamlit>=1.40
+pandas>=2.0
+numpy>=1.26
+plotly>=5.20
+
+# Back the "Refresh sentiment now" button (runs the AI pipeline on demand).
+# Imported lazily in ui/forms.py so the dashboard loads even if these are absent.
+requests>=2.31
+feedparser>=6.0
+google-generativeai>=0.8

@@ -88,6 +88,29 @@ def log_transaction(conn: sqlite3.Connection, action_type: str, metal: str,
     return tx_id
 
 
+_TRANSACTION_COLUMNS = ["id", "timestamp", "action_type", "metal",
+                        "execution_rate_myr", "mass_grams", "fiat_total_myr"]
+
+
+def fetch_transactions(conn: sqlite3.Connection,
+                       metal: str | None = None) -> pd.DataFrame:
+    """Return the trade ledger as a DataFrame, ascending by timestamp.
+
+    `metal` ('GOLD'/'SILVER') filters to one metal; None returns all rows.
+    """
+    query = (
+        "SELECT id, timestamp, action_type, metal, execution_rate_myr, "
+        "mass_grams, fiat_total_myr FROM transactions"
+    )
+    params: tuple = ()
+    if metal is not None:
+        query += " WHERE metal=?"
+        params = (metal,)
+    query += " ORDER BY timestamp"
+    rows = conn.execute(query, params).fetchall()
+    return pd.DataFrame([dict(r) for r in rows], columns=_TRANSACTION_COLUMNS)
+
+
 _MATRIX_COLUMNS = ["date", "gold_rate_per_oz", "silver_rate_per_oz"]
 
 
