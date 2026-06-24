@@ -193,7 +193,8 @@ def render_chrome() -> str:
         f'padding:2px 6px;border-radius:2px;">999.9</span></div>',
         unsafe_allow_html=True,
     )
-    return st.radio("Navigation", ["Dashboard", "New Trade", "Settings"],
+    return st.radio("Navigation",
+                    ["Dashboard", "New Trade", "Daily Prices", "Settings"],
                     horizontal=True, key="nav", label_visibility="collapsed")
 
 
@@ -283,6 +284,8 @@ def main() -> None:
         render_dashboard(model)
     elif section == "New Trade":
         forms.render_ledger_input_form(model)
+    elif section == "Daily Prices":
+        forms.render_daily_quotes_form(model)
     else:
         forms.render_settings_panel(model)
 

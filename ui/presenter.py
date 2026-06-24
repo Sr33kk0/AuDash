@@ -240,6 +240,42 @@ def reversal_entry(action_type: str, metal: str, execution_rate_myr: float,
     }
 
 
+# --- daily quotes ------------------------------------------------------------
+
+def quote_preview(buy_rate: float, sell_rate: float,
+                  spot: float) -> dict[str, object]:
+    """Implied per-side spread of a prospective quote vs the latest spot.
+
+    `inverted` flags buy < sell (a likely swapped entry); the quote is still
+    recorded as entered.
+    """
+    return {
+        "buy_spread": buy_rate - spot,
+        "sell_spread": spot - sell_rate,
+        "inverted": buy_rate < sell_rate,
+    }
+
+
+def build_recent_quotes(quotes, limit: int = 10) -> list[dict]:
+    """View-model for the recent-quotes list, newest first.
+
+    `quotes` is the fetch_daily_quotes DataFrame; an empty/None frame yields an
+    empty list. Carries display strings plus the raw date/metal a delete needs.
+    """
+    if quotes is None or len(quotes) == 0:
+        return []
+    recent = quotes.sort_values("date", ascending=False).head(limit)
+    rows = []
+    for _, r in recent.iterrows():
+        rows.append({
+            "date": str(r["date"]),
+            "metal": str(r["metal"]),
+            "buy": fmt(float(r["buy_rate_myr"])),
+            "sell": fmt(float(r["sell_rate_myr"])),
+        })
+    return rows
+
+
 # --- metric grid view-model --------------------------------------------------
 
 def metric_tone(tone: str, theme: dict) -> dict[str, str]:

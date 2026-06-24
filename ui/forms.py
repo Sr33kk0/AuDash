@@ -18,7 +18,8 @@ from datetime import datetime, timedelta, timezone
 import streamlit as st
 
 from database.connection import (
-    fetch_transactions, get_db_connection, log_transaction, set_setting,
+    delete_daily_quote, fetch_daily_quotes, fetch_transactions,
+    get_db_connection, log_transaction, set_setting, write_daily_quote,
 )
 from ui import presenter
 from ui.theme import THEME
@@ -124,6 +125,39 @@ def _commit_void(entry: dict, original_ts: str, flash: str) -> None:
         return
     st.session_state.pop("void_arm", None)
     st.session_state["_trade_flash"] = flash
+
+
+def _commit_quote(metal: str, quote_date, buy_rate: float,
+                  sell_rate: float) -> None:
+    if buy_rate <= 0 or sell_rate <= 0:
+        st.session_state["_quote_error"] = (
+            "Enter buy and sell rates greater than zero — nothing was recorded.")
+        return
+    st.session_state.pop("_quote_error", None)
+    try:
+        with get_db_connection() as conn:
+            write_daily_quote(conn, quote_date.isoformat(), metal,
+                              buy_rate, sell_rate)
+    except Exception:
+        st.session_state["_quote_error"] = (
+            "Couldn't record the quote — the worker may be mid-write. Nothing "
+            "was saved; retry in a moment.")
+        return
+    st.session_state["_trade_flash"] = (
+        f"Recorded {metal} quote for {quote_date.isoformat()} · buy "
+        f"{presenter.fmt(buy_rate)} / sell {presenter.fmt(sell_rate)} MYR/g")
+
+
+def _delete_quote(date: str, metal: str) -> None:
+    try:
+        with get_db_connection() as conn:
+            delete_daily_quote(conn, date, metal)
+    except Exception:
+        st.session_state["_quote_error"] = (
+            "Couldn't delete the quote — the worker may be mid-write. Retry in "
+            "a moment.")
+        return
+    st.session_state["_trade_flash"] = f"Deleted {metal} quote for {date}"
 
 
 def _flash() -> None:
@@ -324,6 +358,127 @@ def _render_void_confirm(row: dict) -> None:
                    type="primary", on_click=_commit_void, args=(entry, row["ts"], flash))
     cancel.button(f"Keep {row['action']} {row['metal']}", key=f"voidcancel_{row['id']}",
                   on_click=_cancel_void)
+
+
+# --- Daily Prices ------------------------------------------------------------
+
+def render_daily_quotes_form(model: dict) -> None:
+    """Record the platform's quoted buy/sell prices for a day (not a trade)."""
+    _heading("Daily Prices", "Record today's quote",
+             "The platform's quoted buy/sell prices for a day — no trade "
+             "required. Recorded quotes set the median default spread used on "
+             "days you don't enter one.")
+    _flash()
+
+    metal = st.radio("Metal", ["GOLD", "SILVER"], horizontal=True,
+                     key="quote_metal")
+    quote_date = st.date_input("Date", key="quote_date")
+    buy_rate = st.number_input(
+        "Buy rate · MYR/g", min_value=0.0, value=0.0, step=1.0, format="%.2f",
+        key="quote_buy", help="Price you pay to buy (≈ spot + spread).")
+    sell_rate = st.number_input(
+        "Sell rate · MYR/g", min_value=0.0, value=0.0, step=1.0, format="%.2f",
+        key="quote_sell", help="Price you receive to sell (≈ spot − spread).")
+
+    _render_quote_preview(model, metal, buy_rate, sell_rate)
+
+    st.button("Record quote", key="quote_submit", type="primary",
+              on_click=_commit_quote, args=(metal, quote_date, buy_rate, sell_rate))
+
+    error = st.session_state.pop("_quote_error", None)
+    if error:
+        st.error(error)
+
+    _render_recent_quotes()
+
+
+def _render_quote_preview(model: dict, metal: str,
+                          buy_rate: float, sell_rate: float) -> None:
+    info = model["quotes"][metal]
+    spot = model["spot_today"][metal]
+    prev = presenter.quote_preview(buy_rate, sell_rate, spot)
+
+    st.markdown(
+        f'<div class="audash-eyebrow" style="margin-top:6px;">Current default '
+        f'spread · {metal.lower()} · median of {info["n_quotes"]} quote(s)</div>'
+        f'<div class="audash-num" style="font-family:{THEME["f_data"]};'
+        f'font-size:15px;color:{THEME["sub"]};margin-bottom:10px;">buy +'
+        f'{presenter.fmt(info["buy_spread"])} / sell −'
+        f'{presenter.fmt(info["sell_spread"])} MYR/g</div>',
+        unsafe_allow_html=True)
+
+    if prev["inverted"] and buy_rate > 0 and sell_rate > 0:
+        st.warning("Buy rate is below sell rate — did you swap them? It will "
+                   "be recorded exactly as entered.")
+    if spot > 0 and (buy_rate > 0 or sell_rate > 0):
+        st.markdown(
+            f'<div class="audash-eyebrow">Implied spread · vs latest spot '
+            f'{presenter.fmt(spot)}</div>'
+            f'<div class="audash-num" style="font-family:{THEME["f_data"]};'
+            f'font-size:15px;color:{THEME["accent"]};margin-bottom:12px;">buy '
+            f'{presenter.signed(prev["buy_spread"])} / sell '
+            f'{presenter.signed(prev["sell_spread"])} MYR/g</div>',
+            unsafe_allow_html=True)
+
+
+def _quote_row_dl(row: dict) -> str:
+    t = THEME
+    color = t["gold"] if row["metal"] == "GOLD" else t["silver"]
+    return (
+        '<dl class="audash-trade" style="display:flex;align-items:center;gap:14px;">'
+        '<div style="flex:3 1 0;min-width:0;">'
+        '<dt class="audash-sr-only">Quote</dt>'
+        f'<dd><span style="font-family:{t["f_ui"]};font-size:14px;font-weight:600;'
+        f'color:{color};">{row["metal"]}</span>'
+        f'<span style="display:block;font-family:{t["f_data"]};font-size:11px;'
+        f'color:{t["muted"]};">{row["date"]}</span></dd></div>'
+        '<div style="flex:2 1 0;min-width:0;">'
+        '<dt class="audash-sr-only">Buy rate</dt>'
+        f'<dd class="audash-num" style="font-family:{t["f_data"]};font-size:14px;'
+        f'color:{t["text"]};">{row["buy"]} '
+        f'<span style="color:{t["muted"]};font-size:11px;">buy</span></dd></div>'
+        '<div style="flex:2 1 0;min-width:0;">'
+        '<dt class="audash-sr-only">Sell rate</dt>'
+        f'<dd class="audash-num" style="font-family:{t["f_data"]};font-size:14px;'
+        f'color:{t["text"]};">{row["sell"]} '
+        f'<span style="color:{t["muted"]};font-size:11px;">sell</span></dd></div>'
+        '</dl>'
+    )
+
+
+def _render_recent_quotes() -> None:
+    st.markdown(
+        '<div class="audash-eyebrow" role="heading" aria-level="2" '
+        'style="margin:26px 0 12px;">Recent quotes</div>', unsafe_allow_html=True)
+    try:
+        with get_db_connection() as conn:
+            quotes = fetch_daily_quotes(conn)
+    except Exception:
+        st.error("Couldn't read recorded quotes right now — the worker may be "
+                 "mid-write. Retry in a moment.")
+        return
+
+    rows = presenter.build_recent_quotes(quotes, limit=10)
+    if not rows:
+        st.markdown(
+            f'<p style="font-family:{THEME["f_body"]};color:{THEME["muted"]};'
+            f'margin:0;">No quotes recorded yet — your first entry sets the '
+            f'default spread.</p>', unsafe_allow_html=True)
+        return
+    for row in rows:
+        _render_quote_row(row)
+
+
+def _render_quote_row(row: dict) -> None:
+    data, action = st.columns([6.6, 1.4])
+    with data:
+        st.markdown(_quote_row_dl(row), unsafe_allow_html=True)
+    with action:
+        st.button(
+            f"Delete {row['metal']} {row['date']}",
+            key=f"delq_{row['date']}_{row['metal']}",
+            help=f"Remove the {row['metal']} quote for {row['date']}.",
+            on_click=_delete_quote, args=(row["date"], row["metal"]))
 
 
 # --- Settings ----------------------------------------------------------------

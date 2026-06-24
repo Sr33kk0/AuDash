@@ -10,7 +10,8 @@ from datetime import timedelta
 from streamlit.testing.v1 import AppTest
 
 from database.connection import (
-    fetch_transactions, get_db_connection, get_setting, log_transaction,
+    delete_daily_quote, fetch_daily_quotes, fetch_transactions,
+    get_db_connection, get_setting, log_transaction, write_daily_quote,
     write_spot_prices,
 )
 from utils.timeutil import now_utc
@@ -145,3 +146,61 @@ def test_refresh_sentiment_without_key_warns(tmp_path, monkeypatch):
 
     assert not at.exception
     assert any("Gemini API key" in w.value for w in at.warning)
+
+
+def test_recording_a_quote_writes_a_daily_quote_row(tmp_path, monkeypatch):
+    at = _run(tmp_path, monkeypatch)
+    at.radio[0].set_value("Daily Prices").run()
+    _widget(at.number_input, "quote_buy").set_value(520.0).run()
+    _widget(at.number_input, "quote_sell").set_value(510.0).run()
+    _widget(at.button, "quote_submit").click().run()
+
+    assert not at.exception
+    with get_db_connection(str(tmp_path / "audash.db")) as conn:
+        df = fetch_daily_quotes(conn)
+    assert len(df) == 1
+    assert df.iloc[0]["metal"] == "GOLD"
+    assert df.iloc[0]["buy_rate_myr"] == 520.0
+    assert df.iloc[0]["sell_rate_myr"] == 510.0
+
+
+def test_recording_quote_with_zero_rate_is_blocked(tmp_path, monkeypatch):
+    at = _run(tmp_path, monkeypatch)
+    at.radio[0].set_value("Daily Prices").run()
+    _widget(at.number_input, "quote_buy").set_value(520.0).run()
+    # leave quote_sell at its 0.0 default
+    _widget(at.button, "quote_submit").click().run()
+
+    assert not at.exception
+    assert any("greater than zero" in e.value for e in at.error)
+    with get_db_connection(str(tmp_path / "audash.db")) as conn:
+        assert len(fetch_daily_quotes(conn)) == 0
+
+
+def test_inverted_quote_warns_but_still_records(tmp_path, monkeypatch):
+    at = _run(tmp_path, monkeypatch)
+    at.radio[0].set_value("Daily Prices").run()
+    _widget(at.number_input, "quote_buy").set_value(500.0).run()
+    _widget(at.number_input, "quote_sell").set_value(510.0).run()  # buy < sell
+
+    assert any("swap" in w.value.lower() for w in at.warning)
+    _widget(at.button, "quote_submit").click().run()
+    assert not at.exception
+    with get_db_connection(str(tmp_path / "audash.db")) as conn:
+        assert len(fetch_daily_quotes(conn)) == 1
+
+
+def test_deleting_a_quote_removes_it(tmp_path, monkeypatch):
+    _seed(tmp_path / "audash.db")
+    with get_db_connection(str(tmp_path / "audash.db")) as conn:
+        write_daily_quote(conn, "2026-06-20", "GOLD", 500.0, 490.0)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    at = AppTest.from_file(APP, default_timeout=60).run()
+
+    at.radio[0].set_value("Daily Prices").run()
+    _widget(at.button, "delq_2026-06-20_GOLD").click().run()
+
+    assert not at.exception
+    with get_db_connection(str(tmp_path / "audash.db")) as conn:
+        assert len(fetch_daily_quotes(conn)) == 0

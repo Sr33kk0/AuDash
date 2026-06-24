@@ -356,3 +356,35 @@ def test_reversal_entry_flips_action_and_preserves_amounts():
                    "fiat_total_myr": 800.0}
     back = presenter.reversal_entry("SELL", "SILVER", 5.0, 10.0, 50.0)
     assert back["action_type"] == "BUY"
+
+
+# --- quote preview + recent quotes -------------------------------------------
+
+def test_quote_preview_computes_per_side_spread_vs_spot():
+    prev = presenter.quote_preview(104.0, 97.0, 100.0)
+    assert prev["buy_spread"] == pytest.approx(4.0)   # 104 - 100
+    assert prev["sell_spread"] == pytest.approx(3.0)  # 100 - 97
+    assert prev["inverted"] is False
+
+
+def test_quote_preview_flags_inverted_when_buy_below_sell():
+    prev = presenter.quote_preview(500.0, 510.0, 505.0)
+    assert prev["inverted"] is True
+
+
+def test_build_recent_quotes_newest_first_with_raw_keys():
+    quotes = pd.DataFrame([
+        {"date": "2026-06-20", "metal": "GOLD", "buy_rate_myr": 500.0,
+         "sell_rate_myr": 490.0, "recorded_at": "x"},
+        {"date": "2026-06-24", "metal": "SILVER", "buy_rate_myr": 7.0,
+         "sell_rate_myr": 6.5, "recorded_at": "y"},
+    ])
+    rows = presenter.build_recent_quotes(quotes)
+    assert rows[0]["date"] == "2026-06-24"   # newest first
+    assert rows[0]["metal"] == "SILVER"
+    assert rows[0]["buy"] == "7.00"
+    assert rows[1]["sell"] == "490.00"
+
+
+def test_build_recent_quotes_empty_is_empty_list():
+    assert presenter.build_recent_quotes(pd.DataFrame()) == []
