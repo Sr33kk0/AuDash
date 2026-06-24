@@ -9,6 +9,7 @@ The verdict word, votes, and gate are derived from the structured dict returned
 by analytics.signals.generate_trade_signal — the UI never re-implements fusion.
 """
 
+import re
 from datetime import datetime
 
 
@@ -144,9 +145,24 @@ def sentiment_age_days(snapshot: dict | None, now: datetime) -> float | None:
 # --- cash <-> mass derivation ------------------------------------------------
 
 def _to_float(value: object) -> float:
-    """Parse a form value to float; blank/garbage -> 0.0 (never raises)."""
+    """Parse a form value to float; blank/garbage -> 0.0 (never raises).
+
+    Accepts native numbers as-is and tolerates typed/pasted strings carrying
+    thousands separators, currency symbols, or stray whitespace
+    ("RM 1,234.56" -> 1234.56). Assumes en-US decimals (matches `fmt`).
+    """
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        try:
+            return float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+    if value is None:
+        return 0.0
+    cleaned = re.sub(r"[^0-9.\-]", "", str(value))
     try:
-        return float(value)
+        return float(cleaned)
     except (TypeError, ValueError):
         return 0.0
 
@@ -166,6 +182,62 @@ def resolve_trade_amounts(mode: str, primary_value: object,
     if mode == "mass":
         return {"mass_grams": p, "fiat_total_myr": p * rate}
     raise ValueError(f"mode must be 'cash' or 'mass', got {mode!r}")
+
+
+# --- trade ledger: confirm line, recent rows, reversal -----------------------
+
+def trade_confirm_line(action: str, metal: str, mass_grams: float,
+                       fiat_total_myr: float, rate: float) -> str:
+    """One-line, exact restatement of what a confirm will write to the ledger."""
+    return (f"{action} · {metal} · {fmt(mass_grams, 4)} g "
+            f"@ {fmt(rate)} MYR/g · RM {fmt(fiat_total_myr)}")
+
+
+def build_recent_trades(trades, theme: dict, limit: int = 8) -> list[dict]:
+    """View-model for the recent-trades ledger panel, newest first.
+
+    Carries both display strings (for the row) and the raw numeric fields
+    (so the void action can build an exact offsetting entry). `trades` is the
+    fetch_transactions DataFrame; an empty/None frame yields an empty list.
+    """
+    if trades is None or len(trades) == 0:
+        return []
+    recent = trades.sort_values("timestamp", ascending=False).head(limit)
+    rows = []
+    for _, r in recent.iterrows():
+        action = str(r["action_type"])
+        rows.append({
+            "id": str(r["id"]),
+            "ts": str(r["timestamp"]),
+            "date": str(r["timestamp"])[:10],
+            "action": action,
+            "metal": str(r["metal"]),
+            "color": theme["buy"] if action == "BUY" else theme["sell"],
+            "opposite": "SELL" if action == "BUY" else "BUY",
+            "mass": fmt(float(r["mass_grams"]), 4),
+            "rate": fmt(float(r["execution_rate_myr"])),
+            "fiat": fmt(float(r["fiat_total_myr"])),
+            "execution_rate_myr": float(r["execution_rate_myr"]),
+            "mass_grams": float(r["mass_grams"]),
+            "fiat_total_myr": float(r["fiat_total_myr"]),
+        })
+    return rows
+
+
+def reversal_entry(action_type: str, metal: str, execution_rate_myr: float,
+                   mass_grams: float, fiat_total_myr: float) -> dict:
+    """The exact offsetting entry that reverses a trade (append-only void).
+
+    Flips the side, keeps metal/mass/rate/fiat identical, so the portfolio walk
+    nets the position back out without ever erasing the original row.
+    """
+    return {
+        "action_type": "SELL" if action_type == "BUY" else "BUY",
+        "metal": metal,
+        "execution_rate_myr": float(execution_rate_myr),
+        "mass_grams": float(mass_grams),
+        "fiat_total_myr": float(fiat_total_myr),
+    }
 
 
 # --- metric grid view-model --------------------------------------------------

@@ -4,24 +4,34 @@ These use real Streamlit widgets (so they're interactive and AppTest-driveable)
 over the dark theme. All display formatting + the cash<->mass math comes from
 the pure presenter; writes go through the Phase 1 DAO. The AI deps for
 "Refresh sentiment now" are imported lazily so the dashboard never needs them.
+
+The trade ledger is an append-only journal: a logged entry is confirmed before
+it is written, and corrected by reversal (an exact offsetting entry) rather than
+deletion — the audit trail always stays honest (capital protection, Rule 3).
+State transitions go through on_click callbacks so a single natural rerun (not a
+manual st.rerun) advances review -> confirm -> logged.
 """
 
 import os
+from datetime import datetime, timedelta, timezone
 
 import streamlit as st
 
-from database.connection import get_db_connection, log_transaction, set_setting
+from database.connection import (
+    fetch_transactions, get_db_connection, log_transaction, set_setting,
+)
 from ui import presenter
 from ui.theme import THEME
+from utils.timeutil import now_utc
 
 
 def _heading(eyebrow: str, title: str, blurb: str) -> None:
     st.markdown(
         f'<div class="audash-eyebrow">{eyebrow}</div>'
-        f'<div style="font-family:{THEME["f_display"]};font-weight:600;'
-        f'font-size:34px;color:{THEME["text"]};margin:2px 0 4px;">{title}</div>'
+        f'<div role="heading" aria-level="1" style="font-family:{THEME["f_display"]};'
+        f'font-weight:600;font-size:34px;color:{THEME["text"]};margin:2px 0 4px;">{title}</div>'
         f'<p style="font-family:{THEME["f_body"]};font-size:15px;'
-        f'color:{THEME["sub"]};margin:0 0 22px;">{blurb}</p>',
+        f'color:{THEME["sub"]};max-width:70ch;margin:0 0 22px;">{blurb}</p>',
         unsafe_allow_html=True,
     )
 
@@ -38,13 +48,112 @@ def _trade_timestamp(trade_date) -> str:
     return f"{trade_date.isoformat()}T12:00:00+00:00"
 
 
-def render_ledger_input_form(model: dict) -> None:
-    """Pick metal/action/date + a cash<->mass toggle; write one ledger row."""
-    market = model["market"]
-    _heading("New Trade", "Log a transaction",
-             "Recorded to the trade ledger. The derived value uses the live "
-             "platform rate.")
+def _reversal_timestamp(original_ts: str) -> str:
+    """Timestamp for a void's offsetting entry: now, but never before the row
+    it reverses, so the chronological portfolio walk sees open-then-close."""
+    now = now_utc()
+    try:
+        orig = datetime.fromisoformat(str(original_ts))
+    except (TypeError, ValueError):
+        return now.isoformat()
+    if orig.tzinfo is None:
+        orig = orig.replace(tzinfo=timezone.utc)
+    return (now if now > orig else orig + timedelta(seconds=1)).isoformat()
 
+
+# --- state-transition callbacks (run before the rerun) -----------------------
+
+def _stage_trade(action: str, metal: str, rate: float,
+                 amounts: dict, trade_date) -> None:
+    if amounts["mass_grams"] <= 0 or amounts["fiat_total_myr"] <= 0:
+        st.session_state["_trade_error"] = (
+            "Enter an amount greater than zero — nothing was logged.")
+        return
+    st.session_state.pop("_trade_error", None)
+    st.session_state["pending_trade"] = {
+        "action": action, "metal": metal, "rate": rate,
+        "mass_grams": amounts["mass_grams"],
+        "fiat_total_myr": amounts["fiat_total_myr"], "date": trade_date,
+    }
+
+
+def _commit_trade() -> None:
+    pending = st.session_state.get("pending_trade")
+    if not pending:
+        return
+    try:
+        with get_db_connection() as conn:
+            log_transaction(
+                conn, pending["action"], pending["metal"], pending["rate"],
+                pending["mass_grams"], pending["fiat_total_myr"],
+                timestamp=_trade_timestamp(pending["date"]))
+    except Exception:
+        st.session_state["_confirm_error"] = (
+            "Couldn't write to the ledger — nothing was logged. The worker may "
+            "be mid-write; try again in a moment.")
+        return
+    st.session_state.pop("pending_trade", None)
+    st.session_state["_trade_flash"] = (
+        f"Logged {pending['action']} · {pending['metal']} · "
+        f"RM {presenter.fmt(pending['fiat_total_myr'])} → ledger")
+
+
+def _cancel_trade() -> None:
+    st.session_state.pop("pending_trade", None)
+
+
+def _arm_void(tx_id: str) -> None:
+    st.session_state["void_arm"] = tx_id
+
+
+def _cancel_void() -> None:
+    st.session_state.pop("void_arm", None)
+
+
+def _commit_void(entry: dict, original_ts: str, flash: str) -> None:
+    try:
+        with get_db_connection() as conn:
+            log_transaction(
+                conn, entry["action_type"], entry["metal"],
+                entry["execution_rate_myr"], entry["mass_grams"],
+                entry["fiat_total_myr"], timestamp=_reversal_timestamp(original_ts))
+    except Exception:
+        st.session_state["_void_error"] = (
+            "Couldn't write the reversal — the ledger is unchanged. Retry in a "
+            "moment.")
+        return
+    st.session_state.pop("void_arm", None)
+    st.session_state["_trade_flash"] = flash
+
+
+def _flash() -> None:
+    """Surface a one-shot success message stashed by a callback across a rerun."""
+    msg = st.session_state.pop("_trade_flash", None)
+    if msg:
+        st.success(msg)
+
+
+# --- New Trade ---------------------------------------------------------------
+
+def render_ledger_input_form(model: dict) -> None:
+    """Two-step trade entry (review -> confirm) + the recent-trades ledger."""
+    _heading("New Trade", "Log a transaction",
+             "Confirmed before it joins the ledger. The derived value uses the "
+             "live platform rate; the ledger is append-only and corrected by "
+             "reversal, never erased.")
+    _flash()
+
+    pending = st.session_state.get("pending_trade")
+    if pending:
+        _render_trade_confirm(pending)
+    else:
+        _render_trade_entry(model["market"])
+
+    _render_recent_trades()
+
+
+def _render_trade_entry(market: dict) -> None:
+    """Pick metal/action/date + a cash<->mass amount; stage a trade to review."""
     metal = st.radio("Metal", ["GOLD", "SILVER"], horizontal=True, key="trade_metal")
     action = st.radio("Action", ["BUY", "SELL"], horizontal=True, key="trade_action")
     trade_date = st.date_input("Date", key="trade_date")
@@ -61,9 +170,11 @@ def render_ledger_input_form(model: dict) -> None:
 
     mode = st.radio("Enter by", ["cash", "mass"], horizontal=True, key="trade_mode",
                     format_func=lambda m: "Cash · MYR" if m == "cash" else "Mass · grams")
-    primary = st.text_input(
+    step, fmt_spec = (100.0, "%.2f") if mode == "cash" else (0.1, "%.4f")
+    primary = st.number_input(
         "Cash · MYR" if mode == "cash" else "Mass · grams",
-        value="0", key="trade_primary")
+        min_value=0.0, value=0.0, step=step, format=fmt_spec, key="trade_primary",
+        help="Positive amounts only; a non-positive value can't be logged.")
 
     amounts = presenter.resolve_trade_amounts(mode, primary, rate)
     if mode == "cash":
@@ -78,13 +189,144 @@ def render_ledger_input_form(model: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    if st.button(f"Log {action} · {metal}", key="trade_submit", type="primary"):
-        with get_db_connection() as conn:
-            log_transaction(conn, action, metal, rate,
-                            amounts["mass_grams"], amounts["fiat_total_myr"],
-                            timestamp=_trade_timestamp(trade_date))
-        st.success(f"Logged {action} · {metal} · {derived} → ledger")
+    st.button("Review trade →", key="trade_review", type="primary",
+              on_click=_stage_trade,
+              args=(action, metal, rate, amounts, trade_date))
 
+    error = st.session_state.pop("_trade_error", None)
+    if error:
+        st.error(error)
+
+
+def _render_trade_confirm(pending: dict) -> None:
+    """Show the exact entry and require a deliberate confirm before writing."""
+    line = presenter.trade_confirm_line(
+        pending["action"], pending["metal"], pending["mass_grams"],
+        pending["fiat_total_myr"], pending["rate"])
+    st.markdown(
+        f'<div class="audash-panel" style="margin-bottom:16px;">'
+        f'<div class="audash-eyebrow" role="heading" aria-level="2" style="margin-bottom:10px;">'
+        f'Confirm entry · review before it joins the ledger</div>'
+        f'<div class="audash-num" style="font-family:{THEME["f_data"]};'
+        f'font-size:18px;font-weight:600;color:{THEME["accent"]};">{line}</div>'
+        f'<p style="font-family:{THEME["f_body"]};font-size:13px;color:{THEME["muted"]};'
+        f'margin:12px 0 0;">Append-only: once logged, this can be reversed but '
+        f'not erased.</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    confirm, cancel = st.columns([1, 1])
+    confirm.button(f"Confirm · log {pending['action']} {pending['metal']}",
+                   key="trade_submit", type="primary", on_click=_commit_trade)
+    cancel.button("Cancel · edit", key="trade_cancel", on_click=_cancel_trade)
+
+    error = st.session_state.pop("_confirm_error", None)
+    if error:
+        st.error(error)
+
+
+# --- Recent trades + void ----------------------------------------------------
+
+def _render_recent_trades() -> None:
+    """The append-only ledger tail, each row reversible via an offsetting void."""
+    st.markdown(
+        '<div class="audash-eyebrow" role="heading" aria-level="2" style="margin:26px 0 12px;">'
+        'Recent trades · ledger</div>', unsafe_allow_html=True)
+    try:
+        with get_db_connection() as conn:
+            trades = fetch_transactions(conn)
+    except Exception:
+        st.error("Couldn't read the ledger right now — the worker may be "
+                 "mid-write. Retry in a moment.")
+        return
+
+    rows = presenter.build_recent_trades(trades, THEME, limit=8)
+    if not rows:
+        st.markdown(
+            f'<p style="font-family:{THEME["f_body"]};color:{THEME["muted"]};'
+            f'margin:0;">No trades logged yet — your first entry will appear '
+            f'here.</p>', unsafe_allow_html=True)
+        return
+
+    armed = st.session_state.get("void_arm")
+    for row in rows:
+        _render_trade_row(row, armed=(armed == row["id"]))
+
+    error = st.session_state.pop("_void_error", None)
+    if error:
+        st.error(error)
+
+
+def _trade_row_dl(row: dict) -> str:
+    """One ledger row as a horizontal description list.
+
+    Each datum is a <dt>/<dd> pair (the <dt> labels are screen-reader-only), so
+    assistive tech hears "Trade BUY · GOLD, Mass 2.0000 g, Value RM 800.00 …"
+    instead of an unlabeled value stream. Flex ratios mirror the old 3 : 1.6 : 2
+    columns so the figures still line up down the ledger."""
+    t = THEME
+    return (
+        '<dl class="audash-trade" style="display:flex;align-items:center;gap:14px;">'
+        '<div style="flex:3 1 0;min-width:0;">'
+        '<dt class="audash-sr-only">Trade</dt>'
+        f'<dd><span style="font-family:{t["f_ui"]};font-size:14px;font-weight:600;'
+        f'color:{row["color"]};">{row["action"]} · {row["metal"]}</span>'
+        f'<span style="display:block;font-family:{t["f_data"]};font-size:11px;'
+        f'color:{t["muted"]};">{row["date"]}</span></dd></div>'
+        '<div style="flex:1.6 1 0;min-width:0;">'
+        '<dt class="audash-sr-only">Mass (grams)</dt>'
+        f'<dd class="audash-num" style="font-family:{t["f_data"]};font-size:14px;'
+        f'color:{t["text"]};">{row["mass"]} '
+        f'<span style="color:{t["muted"]};font-size:11px;">g</span></dd></div>'
+        '<div style="flex:2 1 0;min-width:0;">'
+        '<dt class="audash-sr-only">Value</dt>'
+        f'<dd class="audash-num" style="font-family:{t["f_data"]};font-size:14px;'
+        f'color:{t["text"]};">RM {row["fiat"]}'
+        f'<span style="display:block;font-size:11px;color:{t["muted"]};">'
+        f'@ {row["rate"]}</span></dd></div>'
+        '</dl>'
+    )
+
+
+def _render_trade_row(row: dict, armed: bool) -> None:
+    data, action = st.columns([6.6, 1.4])
+    with data:
+        st.markdown(_trade_row_dl(row), unsafe_allow_html=True)
+    with action:
+        if not armed:
+            st.button(
+                f"Void {row['action']} {row['metal']}…", key=f"void_{row['id']}",
+                help=f"Reverse the {row['action']} {row['metal']} trade from "
+                     f"{row['date']}.",
+                on_click=_arm_void, args=(row["id"],))
+
+    if armed:
+        _render_void_confirm(row)
+
+
+def _render_void_confirm(row: dict) -> None:
+    opp_color = THEME["sell"] if row["opposite"] == "SELL" else THEME["buy"]
+    st.markdown(
+        f'<div style="font-family:{THEME["f_body"]};font-size:13px;'
+        f'color:{THEME["sub"]};margin:2px 0 8px;">Void writes an offsetting '
+        f'<b style="color:{opp_color};">{row["opposite"]}</b> of {row["mass"]} g '
+        f'to reverse this {row["action"]}. The original stays on the ledger.</div>',
+        unsafe_allow_html=True)
+
+    entry = presenter.reversal_entry(
+        row["action"], row["metal"], row["execution_rate_myr"],
+        row["mass_grams"], row["fiat_total_myr"])
+    flash = (f"Voided {row['action']} · {row['metal']} — offsetting "
+             f"{entry['action_type']} written")
+
+    confirm, cancel = st.columns([1, 1])
+    confirm.button(f"Void {row['action']} {row['metal']}", key=f"voidok_{row['id']}",
+                   type="primary", on_click=_commit_void, args=(entry, row["ts"], flash))
+    cancel.button(f"Keep {row['action']} {row['metal']}", key=f"voidcancel_{row['id']}",
+                  on_click=_cancel_void)
+
+
+# --- Settings ----------------------------------------------------------------
 
 def render_settings_panel(model: dict) -> None:
     """Edit every system_settings key; save, or re-run sentiment on demand."""
@@ -95,8 +337,8 @@ def render_settings_panel(model: dict) -> None:
     edited: dict[str, str] = {}
     for group in presenter.settings_groups(settings):
         st.markdown(
-            f'<div class="audash-eyebrow" style="color:{THEME["accent"]};'
-            f'margin:14px 0 6px;">{group["title"]}</div>',
+            f'<div class="audash-eyebrow" role="heading" aria-level="2" '
+            f'style="color:{THEME["accent"]};margin:14px 0 6px;">{group["title"]}</div>',
             unsafe_allow_html=True,
         )
         cols = st.columns(2)
@@ -110,10 +352,15 @@ def render_settings_panel(model: dict) -> None:
     save, refresh = st.columns([1, 1])
     with save:
         if st.button("Save settings", key="save_settings", type="primary"):
-            with get_db_connection() as conn:
-                for key, value in edited.items():
-                    set_setting(conn, key, value)
-            st.success("Settings saved to system_settings")
+            try:
+                with get_db_connection() as conn:
+                    for key, value in edited.items():
+                        set_setting(conn, key, value)
+            except Exception:
+                st.error("Couldn't save settings — the worker may be mid-write. "
+                         "Nothing was changed; retry in a moment.")
+            else:
+                st.success("Settings saved to system_settings")
     with refresh:
         if st.button("↻ Refresh sentiment now", key="refresh_sentiment"):
             _refresh_sentiment(model, edited)
@@ -131,11 +378,17 @@ def _refresh_sentiment(model: dict, edited: dict) -> None:
     market = model["market"]
     metrics = {"rsi": market["rsi"], "gsr": model["gsr_band"]["value"]}
     with st.spinner("Re-running sentiment pipeline…"):
-        with get_db_connection() as conn:
-            result = execute_sentiment_pipeline(
-                conn, api_key=api_key,
-                model_name=edited.get("GEMINI_MODEL", "gemini-2.0-flash"),
-                market_metrics=metrics)
+        try:
+            with get_db_connection() as conn:
+                result = execute_sentiment_pipeline(
+                    conn, api_key=api_key,
+                    model_name=edited.get("GEMINI_MODEL", "gemini-2.0-flash"),
+                    market_metrics=metrics)
+        except Exception:
+            st.error("Couldn't reach the database to refresh sentiment — the "
+                     "worker may be mid-write. The prior snapshot is unchanged; "
+                     "retry in a moment.")
+            return
     if result.get("failed"):
         st.error("Sentiment refresh failed — prior snapshot kept (capital protection).")
     else:

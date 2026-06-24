@@ -120,22 +120,40 @@ def build_gsr_balance_svg(degrees: float, theme: dict) -> str:
 
     `degrees` is the beam tilt (+ = gold pan down / gold-rich), from
     presenter.gsr_position. Silver (AG) hangs left, gold (AU) hangs right.
+
+    The beam is emitted *level* and settled into `degrees` by CSS: `.audash-beam`
+    rotates about the fulcrum while each `.audash-pan` glides to its settled
+    height, still hanging upright (gravity). The resting transforms (per-element
+    inline custom props) carry the final pose, so a motionless / reduced-motion
+    render is identical to the animated end state.
     """
     cx, cy, arm = 150.0, 60.0, 110.0
     rad = math.radians(degrees)
+    # Level beam ends (where the pans start) and the settled, tilted ends.
+    l0x, l0y, r0x, r0y = cx - arm, cy, cx + arm, cy
     lx, ly = cx - math.cos(rad) * arm, cy - math.sin(rad) * arm
     rx, ry = cx + math.cos(rad) * arm, cy + math.sin(rad) * arm
+    # Decorative: the same reading is carried in text beside it (the GSR value,
+    # the side label, and the band bounds), so it's hidden from assistive tech
+    # rather than read out of context as bare "AG"/"AU" glyphs.
     return (
         '<svg viewBox="0 0 300 175" style="width:100%;max-width:300px;height:auto;" '
-        'xmlns="http://www.w3.org/2000/svg">'
+        'aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">'
+        # Static stand + base — the pivot never moves.
         f'<line x1="{cx:.1f}" y1="{cy:.1f}" x2="{cx:.1f}" y2="150" '
         f'stroke="{theme["line"]}" stroke-width="3"/>'
         f'<path d="M {cx - 26:.1f} 150 L {cx + 26:.1f} 150 L {cx + 16:.1f} 160 '
         f'L {cx - 16:.1f} 160 Z" fill="{theme["line"]}"/>'
-        f'<line x1="{lx:.1f}" y1="{ly:.1f}" x2="{rx:.1f}" y2="{ry:.1f}" '
+        # Beam: drawn level, rotated to `degrees` about the fulcrum by CSS.
+        f'<g class="audash-beam" style="--tilt:{degrees:.2f}deg;">'
+        f'<line x1="{l0x:.1f}" y1="{l0y:.1f}" x2="{r0x:.1f}" y2="{r0y:.1f}" '
         f'stroke="{theme["text"]}" stroke-width="3" stroke-linecap="round"/>'
+        '</g>'
         f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5" fill="{theme["accent"]}"/>'
-        f'{_balance_pan(lx, ly, theme["silver"], "AG", theme)}'
-        f'{_balance_pan(rx, ry, theme["gold"], "AU", theme)}'
+        # Pans: drawn at the level ends, each glides to its settled height.
+        f'<g class="audash-pan" style="--dx:{lx - l0x:.2f}px;--dy:{ly - l0y:.2f}px;">'
+        f'{_balance_pan(l0x, l0y, theme["silver"], "AG", theme)}</g>'
+        f'<g class="audash-pan" style="--dx:{rx - r0x:.2f}px;--dy:{ry - r0y:.2f}px;">'
+        f'{_balance_pan(r0x, r0y, theme["gold"], "AU", theme)}</g>'
         '</svg>'
     )

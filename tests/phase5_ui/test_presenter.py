@@ -8,6 +8,7 @@ Streamlit layer renders. All functions are pure (no DB, no Streamlit).
 
 from datetime import datetime, timezone
 
+import pandas as pd
 import pytest
 
 from ui import presenter
@@ -272,3 +273,86 @@ def test_settings_groups_cover_keys_and_mask_api_keys():
     by_key = {f["key"]: f for f in all_fields}
     assert by_key["rsi_period"]["value"] == "14"
     assert by_key["GEMINI_API_KEY"]["type"] == "password"
+
+
+# --- amount parsing (thousands separators / pasted values) -------------------
+
+def test_resolve_trade_amounts_strips_thousands_separators():
+    out = presenter.resolve_trade_amounts("cash", "1,234.56", 1.0)
+    assert out["fiat_total_myr"] == pytest.approx(1234.56)
+
+
+def test_resolve_trade_amounts_strips_currency_prefix():
+    out = presenter.resolve_trade_amounts("cash", "RM 5,000.00", 1.0)
+    assert out["fiat_total_myr"] == pytest.approx(5000.0)
+
+
+def test_resolve_trade_amounts_accepts_native_float():
+    out = presenter.resolve_trade_amounts("mass", 2.45, 100.0)
+    assert out["mass_grams"] == pytest.approx(2.45)
+    assert out["fiat_total_myr"] == pytest.approx(245.0)
+
+
+def test_resolve_trade_amounts_garbage_is_zero():
+    out = presenter.resolve_trade_amounts("cash", "abc", 520.0)
+    assert out == {"mass_grams": 0.0, "fiat_total_myr": 0.0}
+
+
+# --- trade confirm line ------------------------------------------------------
+
+def test_trade_confirm_line_carries_all_fields():
+    line = presenter.trade_confirm_line("BUY", "GOLD", 2.45, 1012.4, 413.22)
+    assert "BUY" in line and "GOLD" in line
+    assert "2.4500" in line
+    assert "413.22" in line
+    assert "1,012.40" in line
+
+
+# --- recent trades + reversal ------------------------------------------------
+
+def _trades_df():
+    return pd.DataFrame([
+        {"id": "a", "timestamp": "2026-06-20T12:00:00+00:00", "action_type": "BUY",
+         "metal": "GOLD", "execution_rate_myr": 400.0, "mass_grams": 2.0,
+         "fiat_total_myr": 800.0},
+        {"id": "b", "timestamp": "2026-06-22T12:00:00+00:00", "action_type": "SELL",
+         "metal": "SILVER", "execution_rate_myr": 5.0, "mass_grams": 10.0,
+         "fiat_total_myr": 50.0},
+    ])
+
+
+def test_build_recent_trades_empty_returns_empty_list():
+    empty = pd.DataFrame(columns=["id", "timestamp", "action_type", "metal",
+                                  "execution_rate_myr", "mass_grams", "fiat_total_myr"])
+    assert presenter.build_recent_trades(empty, THEME) == []
+
+
+def test_build_recent_trades_orders_newest_first():
+    rows = presenter.build_recent_trades(_trades_df(), THEME)
+    assert [r["id"] for r in rows] == ["b", "a"]
+    assert rows[0]["date"] == "2026-06-22"
+
+
+def test_build_recent_trades_limit_caps_rows():
+    rows = presenter.build_recent_trades(_trades_df(), THEME, limit=1)
+    assert len(rows) == 1
+    assert rows[0]["id"] == "b"
+
+
+def test_build_recent_trades_maps_color_and_opposite():
+    rows = presenter.build_recent_trades(_trades_df(), THEME)
+    buy_row = next(r for r in rows if r["id"] == "a")
+    assert buy_row["action"] == "BUY"
+    assert buy_row["color"] == THEME["buy"]
+    assert buy_row["opposite"] == "SELL"
+    assert buy_row["mass"] == "2.0000"
+    assert buy_row["mass_grams"] == pytest.approx(2.0)
+
+
+def test_reversal_entry_flips_action_and_preserves_amounts():
+    rev = presenter.reversal_entry("BUY", "GOLD", 400.0, 2.0, 800.0)
+    assert rev == {"action_type": "SELL", "metal": "GOLD",
+                   "execution_rate_myr": 400.0, "mass_grams": 2.0,
+                   "fiat_total_myr": 800.0}
+    back = presenter.reversal_entry("SELL", "SILVER", 5.0, 10.0, 50.0)
+    assert back["action_type"] == "BUY"

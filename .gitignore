@@ -3,6 +3,9 @@ docs/superpowers/
 docs/plans/
 docs/specs/
 CLAUDE.md
+DESIGN.md
+PRODUCT.md
+.impeccable/
 
 # Secrets / local config
 .env
@@ -11,6 +14,8 @@ CLAUDE.md
 
 # Local data / SQLite database
 data/
+# Local mock instance (seed script, source data, generated DB) — dev-only
+mock/
 *.db
 *.db-wal
 *.db-shm

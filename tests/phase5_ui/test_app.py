@@ -5,6 +5,7 @@ without raising — structure, not pixels (design brief §4). A temp DATA_DIR DB
 is seeded so load_dashboard_model has real data.
 """
 
+import sqlite3
 from datetime import timedelta
 
 from streamlit.testing.v1 import AppTest
@@ -46,6 +47,22 @@ def test_dashboard_shows_verdict_and_metric_labels(tmp_path, monkeypatch):
     assert "Why · ledger of reasons" in blob
 
 
+def test_dashboard_exposes_semantic_structure(tmp_path, monkeypatch):
+    """A11y structural sweep: the verdict is the page heading, sections are
+    headings, the readout is a <dl>, the ledger carries table semantics, and
+    the decorative assay SVG is hidden from assistive tech."""
+    at = _run(tmp_path, monkeypatch)
+    blob = " ".join(m.value for m in at.markdown)
+
+    assert 'role="heading" aria-level="1"' in blob          # verdict == h1
+    assert blob.count('role="heading"') >= 6                 # + section headings
+    assert ('class="audash-readout"' in blob                 # readout is a <dl>
+            and "<dt " in blob and "<dd" in blob)
+    assert all(r in blob for r in (                          # ledger == table
+        'role="table"', 'role="row"', 'role="rowheader"', 'role="cell"'))
+    assert 'aria-hidden="true" focusable="false"' in blob    # GSR svg hidden
+
+
 def _seed_stale(db_file) -> None:
     """Seed prices + a sentiment snapshot whose fetched_at is older than the
     default sentiment_max_age_days (2). Forces the gate to STALE -> HOLD, which
@@ -73,6 +90,61 @@ def test_stale_verdict_html_stays_one_block(tmp_path, monkeypatch):
     interior = verdict.splitlines()[1:-1]  # edges are stripped by clean_text
     assert all(line.strip() for line in interior), \
         "blank line inside verdict HTML closes the block -> raw text leaks"
+
+
+# --- Robustness: read side fails (worker mid-write / DB gone) ----------------
+
+def _boom_locked(*_a, **_k):
+    raise sqlite3.OperationalError("database is locked")
+
+
+def _boom_generic(*_a, **_k):
+    raise RuntimeError("data volume not mounted")
+
+
+def test_db_locked_renders_capital_protection_panel(tmp_path, monkeypatch):
+    """A worker-mid-write lock must surface the on-brand 'holding' panel — a
+    visible, protective HOLD — never a raw traceback (Rule 3 / capital
+    protection)."""
+    _seed(tmp_path / "audash.db")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("ui.data_access.load_dashboard_model", _boom_locked)
+    at = AppTest.from_file(APP, default_timeout=60).run()
+
+    assert not at.exception, "the lock leaked as an uncaught exception"
+    blob = " ".join(m.value for m in at.markdown)
+    assert "Capital protection" in blob
+    assert "HOLD" in blob
+    assert "worker" in blob.lower()              # the reassuring mid-write copy
+    # A calm retry affordance is offered so the user can retake the reading.
+    assert any("read" in (b.label or "").lower() for b in at.button)
+
+
+def test_db_locked_panel_leaks_no_traceback(tmp_path, monkeypatch):
+    """The panel explains, it doesn't dump internals: no Python traceback noise
+    (file paths, 'Traceback', frame arrows) reaches the surface."""
+    _seed(tmp_path / "audash.db")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("ui.data_access.load_dashboard_model", _boom_locked)
+    at = AppTest.from_file(APP, default_timeout=60).run()
+
+    blob = " ".join(m.value for m in at.markdown)
+    assert "Traceback" not in blob
+    assert "OperationalError" not in blob
+
+
+def test_generic_read_failure_renders_panel_and_keeps_nav(tmp_path, monkeypatch):
+    """Any read-side failure (not just a lock) degrades to the on-brand panel,
+    and the nav survives so the user can move or retry."""
+    _seed(tmp_path / "audash.db")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("ui.data_access.load_dashboard_model", _boom_generic)
+    at = AppTest.from_file(APP, default_timeout=60).run()
+
+    assert not at.exception
+    blob = " ".join(m.value for m in at.markdown)
+    assert "Capital protection" in blob
+    assert at.radio, "navigation must remain reachable in the error state"
 
 
 def test_nav_to_new_trade_reveals_form(tmp_path, monkeypatch):

@@ -15,7 +15,7 @@ THEME: dict[str, object] = {
     "line": "#2E2A24",
     "text": "#EDE7D9",
     "sub": "#B8AF9F",
-    "muted": "#8C857A",
+    "muted": "#989186",
     "accent": "#C8A24C",
     "accent_bright": "#E8C877",
     "gold": "#C8A24C",
@@ -129,6 +129,133 @@ IDENTITY_CSS = f"""
     font-size: 14px;
     border-radius: 3px;
     padding: 3px 10px;
+}}
+
+/* Accessible structure ------------------------------------------------- */
+/* Screen-reader-only: present to AT, removed from the visual layout. */
+.audash-sr-only {{
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}}
+/* Native <dl> readout + trade rows: strip the UA margins/indent Streamlit
+   may re-assert at runtime, so the description lists lay out as designed. */
+.audash-readout,
+.audash-readout dd,
+.audash-trade,
+.audash-trade dt,
+.audash-trade dd {{ margin: 0 !important; }}
+.audash-readout dt.audash-cell-label {{ margin: 0 0 9px !important; }}
+.audash-readout dd.audash-cell-dd {{ display: flex; align-items: baseline; gap: 5px; }}
+
+/* Motion — "a reading is taken, then it settles" ---------------------- */
+/* Three entrance gestures, each deliberately distinct so the page never fades
+   in as one uniform reflex: the balance weighs (rotates to equilibrium), the
+   verdict resolves (rises), the readout comes online (a quick scan). The
+   feedback layer is always on; the capital-protection panel breathes to show
+   an *active* hold. Stillness is the brand — most of the page never moves. */
+
+/* Resting pose (also the reduced-motion pose): the signature balance is drawn
+   level, then settled into its GSR tilt. The transform carries the final pose,
+   so a motionless render is identical to the animated end state. */
+.audash-beam {{
+    transform-box: view-box;
+    transform-origin: 150px 60px;
+    transform: rotate(var(--tilt, 0deg));
+}}
+.audash-pan {{
+    transform-box: view-box;
+    transform: translate(var(--dx, 0), var(--dy, 0));
+}}
+
+/* Interaction feedback — standard affordances, eased; tactile, never a nudge. */
+.stButton > button,
+[data-testid="stBaseButton-primary"],
+[data-testid="stBaseButton-secondary"] {{
+    transition: background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+                border-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+                color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+                transform 90ms cubic-bezier(0.22, 1, 0.36, 1);
+}}
+/* The brand's hover lift to Struck Gold, forced past Streamlit's own runtime
+   hover style (which it generates for primaryColor). Focus rings stay instant
+   — keyboard users get immediate feedback, never an eased-in outline. */
+[data-testid="stBaseButton-primary"]:hover {{
+    background-color: {THEME['accent_bright']} !important;
+    border-color: {THEME['accent_bright']} !important;
+    color: {THEME['on_accent']} !important;
+}}
+.stButton > button:active {{ transform: scale(0.985); }}
+.stRadio label {{ transition: color 140ms cubic-bezier(0.22, 1, 0.36, 1); }}
+
+@media (prefers-reduced-motion: no-preference) {{
+    .audash-verdict-word,
+    .audash-verdict-metal {{
+        animation: audash-resolve 440ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }}
+    .audash-verdict-reason {{
+        animation: audash-resolve 440ms cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation-delay: 90ms;
+    }}
+    .audash-cell {{
+        animation: audash-online 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation-delay: calc(var(--i, 0) * 26ms);
+    }}
+    .audash-beam {{ animation: audash-settle 760ms cubic-bezier(0.22, 1, 0.36, 1) both; }}
+    .audash-pan {{ animation: audash-pan-settle 760ms cubic-bezier(0.22, 1, 0.36, 1) both; }}
+    .audash-hold-panel {{ animation: audash-hold-breath 3.6s ease-in-out infinite; }}
+}}
+
+@keyframes audash-resolve {{
+    from {{ opacity: 0; transform: translateY(7px); }}
+    to   {{ opacity: 1; transform: translateY(0); }}
+}}
+@keyframes audash-online {{
+    from {{ opacity: 0; transform: translateY(3px); }}
+    to   {{ opacity: 1; transform: translateY(0); }}
+}}
+@keyframes audash-settle {{
+    from {{ transform: rotate(0deg); }}
+    to   {{ transform: rotate(var(--tilt, 0deg)); }}
+}}
+@keyframes audash-pan-settle {{
+    from {{ transform: translate(0, 0); }}
+    to   {{ transform: translate(var(--dx, 0), var(--dy, 0)); }}
+}}
+/* A slow, low-amplitude breath on the silver border — the instrument is
+   holding, not alarming. Calm by design (Design Principle 2 + 4). */
+@keyframes audash-hold-breath {{
+    0%, 100% {{ border-color: {THEME['hold']}33; }}
+    50%      {{ border-color: {THEME['hold']}66; }}
+}}
+
+/* Honour an explicit reduced-motion request, belt-and-suspenders, even if a
+   future rule forgets to gate itself. The resting poses above already carry
+   every final state, so nothing is lost — only the travel. */
+@media (prefers-reduced-motion: reduce) {{
+    *, *::before, *::after {{
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }}
+}}
+
+/* Responsive layout ---------------------------------------------------- */
+/* Desktop-first (a self-hosted instrument), but the readout and paired panels
+   degrade gracefully if the window is narrowed — 4→2 columns, side-by-side→
+   stacked — instead of overflowing. Owned here as classes, not inline styles,
+   so the breakpoint is real (inline grids can't carry a media query). */
+.audash-readout {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }}
+.audash-duo {{ display: grid; grid-template-columns: 1.5fr 1fr; gap: 20px; margin-bottom: 20px; }}
+@media (max-width: 680px) {{
+    .audash-readout {{ grid-template-columns: repeat(2, 1fr); }}
+    .audash-duo {{ grid-template-columns: 1fr; }}
 }}
 
 /* Streamlit chrome tidy ------------------------------------------------ */
