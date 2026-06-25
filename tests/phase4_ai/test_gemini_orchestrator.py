@@ -109,3 +109,86 @@ def test_inference_does_not_mutate_neutral_constant():
                                        generate_content_fn=lambda p: "bad")
     out["sentiment_score"] = 4.0  # mutate the returned copy
     assert gemini_orchestrator.NEUTRAL_RESULT["sentiment_score"] == 0.0  # constant intact
+
+
+# --- _default_generate_content: live call over the REST endpoint (no SDK) -----
+
+from ai import gemini_orchestrator
+from ai.gemini_orchestrator import _default_generate_content
+
+_GEMINI_TEXT = ('{"sentiment_score": 1.5, "dominant_risk_factor": "Fed", '
+                '"analytical_summary": "Dovish."}')
+_GEMINI_OK_PAYLOAD = {
+    "candidates": [{"content": {"parts": [{"text": _GEMINI_TEXT}]}}]
+}
+
+
+class _FakeResp:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self.status_code = status
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise gemini_orchestrator.requests.HTTPError(f"status {self.status_code}")
+
+
+def test_default_generate_content_returns_model_text(monkeypatch):
+    captured = {}
+
+    def fake_post(url, params=None, json=None, timeout=None):
+        captured.update(url=url, params=params, json=json)
+        return _FakeResp(_GEMINI_OK_PAYLOAD)
+
+    monkeypatch.setattr(gemini_orchestrator.requests, "post", fake_post)
+    text = _default_generate_content(
+        "MY PROMPT", api_key="KEY", model_name="gemini-3-flash-preview")
+    assert text == _GEMINI_TEXT
+
+
+def test_default_generate_content_targets_model_key_and_prompt(monkeypatch):
+    captured = {}
+
+    def fake_post(url, params=None, json=None, timeout=None):
+        captured.update(url=url, params=params, json=json)
+        return _FakeResp(_GEMINI_OK_PAYLOAD)
+
+    monkeypatch.setattr(gemini_orchestrator.requests, "post", fake_post)
+    _default_generate_content("MY PROMPT", api_key="SECRET",
+                              model_name="gemini-3-flash-preview")
+    assert "gemini-3-flash-preview:generateContent" in captured["url"]
+    assert captured["params"]["key"] == "SECRET"   # key in query, not URL path
+    assert "MY PROMPT" in str(captured["json"])     # prompt in request body
+
+
+def test_default_generate_content_requests_json_mime(monkeypatch):
+    captured = {}
+
+    def fake_post(url, params=None, json=None, timeout=None):
+        captured.update(json=json)
+        return _FakeResp(_GEMINI_OK_PAYLOAD)
+
+    monkeypatch.setattr(gemini_orchestrator.requests, "post", fake_post)
+    _default_generate_content("P", api_key="K", model_name="m")
+    assert captured["json"]["generationConfig"]["responseMimeType"] == "application/json"
+
+
+def test_default_generate_content_raises_on_http_error(monkeypatch):
+    monkeypatch.setattr(gemini_orchestrator.requests, "post",
+                        lambda *a, **k: _FakeResp({}, status=429))
+    with pytest.raises(gemini_orchestrator.requests.HTTPError):
+        _default_generate_content("P", api_key="K", model_name="m")
+
+
+def test_inference_uses_rest_path_when_no_fn_injected(monkeypatch):
+    """The real app path (no injected fn) now flows through requests, not the SDK."""
+    monkeypatch.setattr(gemini_orchestrator.requests, "post",
+                        lambda *a, **k: _FakeResp(_GEMINI_OK_PAYLOAD))
+    out = generate_sentiment_inference(
+        [{"title": "h", "link": "u"}], {"rsi": 30.0}, api_key="KEY",
+        model_name="gemini-3-flash-preview")
+    assert out["failed"] is False
+    assert out["sentiment_score"] == pytest.approx(1.5)

@@ -1,18 +1,23 @@
 """Gemini sentiment inference: build a structured prompt, call the model under
 an enforced JSON contract, parse + validate, and never raise.
 
-The live Google SDK is imported lazily inside `_default_generate_content` so
-this module imports cleanly even where `google-generativeai` is absent (e.g. the
-test venv). All callers can inject `generate_content_fn` to stay hermetic.
-On any failure the inference returns NEUTRAL_RESULT (failed=True); the caller
-declines to persist it, preserving the Phase 3 staleness fail-safe (Rule 3).
+The live call goes straight to the Gemini REST endpoint via `requests` (no
+`google-generativeai` SDK dependency); callers can inject `generate_content_fn`
+to stay hermetic in tests. On any failure the inference returns NEUTRAL_RESULT
+(failed=True); the caller declines to persist it, preserving the Phase 3
+staleness fail-safe (Rule 3).
 """
 
 import json
 import logging
 from collections.abc import Callable
 
+import requests
+
 logger = logging.getLogger("ai")
+
+_API_URL = ("https://generativelanguage.googleapis.com/v1beta/"
+            "models/{model}:generateContent")
 
 SENTIMENT_SCORE_MIN = -5.0
 SENTIMENT_SCORE_MAX = 5.0
@@ -71,16 +76,24 @@ def parse_sentiment_response(raw_text: str) -> dict:
 
 
 def _default_generate_content(prompt: str, *, api_key: str, model_name: str) -> str:
-    """Live Gemini call. Imported lazily so the SDK is only needed at runtime."""
-    import google.generativeai as genai
+    """Live Gemini call over the REST endpoint (no SDK dependency).
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(model_name)
-    response = model.generate_content(
-        prompt,
-        generation_config={"response_mime_type": "application/json"},
+    POSTs the prompt to generateContent under an enforced JSON response contract
+    and returns the first candidate's text. Raises on transport or HTTP errors;
+    generate_sentiment_inference catches everything and falls back to neutral.
+    """
+    resp = requests.post(
+        _API_URL.format(model=model_name),
+        params={"key": api_key},
+        json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"responseMimeType": "application/json"},
+        },
+        timeout=20,
     )
-    return response.text
+    resp.raise_for_status()
+    data = resp.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
 def generate_sentiment_inference(

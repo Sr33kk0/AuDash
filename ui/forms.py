@@ -637,7 +637,7 @@ def _refresh_sentiment(model: dict, edited: dict) -> None:
     if not api_key:
         st.warning("No Gemini API key configured — add one above, save, then retry.")
         return
-    # Lazy import: keeps feedparser / google-generativeai off the dashboard path.
+    # Lazy import: keeps feedparser off the dashboard's import path.
     from worker.sentiment_pipeline import execute_sentiment_pipeline
 
     market = model["market"]
