@@ -37,11 +37,6 @@ def _heading(eyebrow: str, title: str, blurb: str) -> None:
     )
 
 
-def _rate_for(market: dict, metal: str, action: str) -> float:
-    """Current platform rate for the chosen metal + side (MYR/gram)."""
-    return float(market[f"{metal.lower()}_{action.lower()}"])
-
-
 def _trade_timestamp(trade_date) -> str:
     """UTC ISO for a date-granular trade. Noon UTC keeps date[:10] == the
     picked date, so the spread engine's spot-on-trade-date join can't drift
@@ -65,16 +60,21 @@ def _reversal_timestamp(original_ts: str) -> str:
 # --- state-transition callbacks (run before the rerun) -----------------------
 
 def _stage_trade(action: str, metal: str, rate: float,
-                 amounts: dict, trade_date) -> None:
+                 amounts: dict, trade_date, quote: dict | None = None) -> None:
     if amounts["mass_grams"] <= 0 or amounts["fiat_total_myr"] <= 0:
         st.session_state["_trade_error"] = (
             "Enter an amount greater than zero — nothing was logged.")
+        return
+    if rate <= 0:
+        st.session_state["_trade_error"] = (
+            "Enter a platform rate greater than zero — nothing was logged.")
         return
     st.session_state.pop("_trade_error", None)
     st.session_state["pending_trade"] = {
         "action": action, "metal": metal, "rate": rate,
         "mass_grams": amounts["mass_grams"],
         "fiat_total_myr": amounts["fiat_total_myr"], "date": trade_date,
+        "quote": quote,
     }
 
 
@@ -88,15 +88,21 @@ def _commit_trade() -> None:
                 conn, pending["action"], pending["metal"], pending["rate"],
                 pending["mass_grams"], pending["fiat_total_myr"],
                 timestamp=_trade_timestamp(pending["date"]))
+            if pending.get("quote"):
+                write_daily_quote(
+                    conn, pending["date"].isoformat(), pending["metal"],
+                    pending["quote"]["buy"], pending["quote"]["sell"])
     except Exception:
         st.session_state["_confirm_error"] = (
             "Couldn't write to the ledger — nothing was logged. The worker may "
             "be mid-write; try again in a moment.")
         return
     st.session_state.pop("pending_trade", None)
+    quote_note = (f" · quote for {pending['date'].isoformat()} recorded"
+                  if pending.get("quote") else "")
     st.session_state["_trade_flash"] = (
         f"Logged {pending['action']} · {pending['metal']} · "
-        f"RM {presenter.fmt(pending['fiat_total_myr'])} → ledger")
+        f"RM {presenter.fmt(pending['fiat_total_myr'])} → ledger{quote_note}")
 
 
 def _cancel_trade() -> None:
@@ -184,26 +190,91 @@ def render_ledger_input_form(model: dict) -> None:
     if pending:
         _render_trade_confirm(pending)
     else:
-        _render_trade_entry(model["market"])
+        _render_trade_entry(model)
 
     _render_recent_trades()
 
 
-def _render_trade_entry(market: dict) -> None:
-    """Pick metal/action/date + a cash<->mass amount; stage a trade to review."""
+def _render_backdated_rates(metal: str, action: str, trade_date,
+                            live_buy: float, live_sell: float) -> tuple[float, dict]:
+    """Two editable platform-rate inputs for a back-dated trade.
+
+    Prefills each side from the recorded daily_quote for (trade_date, metal), or
+    today's live buy/sell when none. Returns (active_rate, quote) where
+    active_rate is the side the trade executes at and quote = {"buy","sell"} is
+    upserted as that date's quote on commit. Widget keys carry date+metal so a
+    changed pick reseeds the prefill (Streamlit keeps a keyed widget's value).
+    """
+    quote_row = None
+    try:
+        with get_db_connection() as conn:
+            quotes = fetch_daily_quotes(conn, metal)
+    except Exception:
+        quotes = None
+    if quotes is not None and not quotes.empty:
+        match = quotes[quotes["date"] == trade_date.isoformat()]
+        if not match.empty:
+            quote_row = match.iloc[-1].to_dict()
+
+    prefills = presenter.backdated_rate_prefills(quote_row, live_buy, live_sell)
+    st.markdown(
+        f'<div class="audash-eyebrow" style="margin-top:6px;">Editing historical '
+        f'platform rates · {trade_date.isoformat()}</div>',
+        unsafe_allow_html=True)
+
+    k = f"{trade_date.isoformat()}_{metal}"
+    buy = st.number_input(
+        "Platform buy rate · MYR/g", min_value=0.0, value=float(prefills["buy"]),
+        step=1.0, format="%.2f", key=f"trade_rate_buy_{k}",
+        help="The platform's BUY price on this date (used when logging a BUY).")
+    sell = st.number_input(
+        "Platform sell rate · MYR/g", min_value=0.0, value=float(prefills["sell"]),
+        step=1.0, format="%.2f", key=f"trade_rate_sell_{k}",
+        help="The platform's SELL price on this date (used when logging a SELL).")
+
+    rate = presenter.active_side_rate(action, buy, sell)
+    st.markdown(
+        f'<div class="audash-eyebrow">Used for this {action} · '
+        f'<span style="color:{THEME["accent"]};">{presenter.fmt(rate)} MYR/g</span>'
+        f' · both rates recorded as the {trade_date.isoformat()} {metal} quote'
+        f'</div>', unsafe_allow_html=True)
+    if buy > 0 and sell > 0 and buy < sell:
+        st.warning("Buy rate is below sell rate — did you swap them? It will be "
+                   "recorded exactly as entered.")
+    return rate, {"buy": buy, "sell": sell}
+
+
+def _render_trade_entry(model: dict) -> None:
+    """Pick metal/action/date + a cash<->mass amount; stage a trade to review.
+
+    Today's trade uses the read-only live platform rate; a back-dated trade
+    (date before today) gets editable buy/sell rate inputs (prefilled from the
+    recorded quote, else live) that are also recorded as that date's quote.
+    """
+    market = model["market"]
+    today = date.fromisoformat(model["today"])
+
     metal = st.radio("Metal", ["GOLD", "SILVER"], horizontal=True, key="trade_metal")
     action = st.radio("Action", ["BUY", "SELL"], horizontal=True, key="trade_action")
-    trade_date = st.date_input("Date", key="trade_date")
+    trade_date = st.date_input("Date", value=today, max_value=today, key="trade_date")
 
-    rate = _rate_for(market, metal, action)
-    st.markdown(
-        f'<div class="audash-eyebrow" style="margin-top:6px;">'
-        f'Platform {action.lower()} rate</div>'
-        f'<div class="audash-num" style="font-family:{THEME["f_data"]};'
-        f'font-size:18px;color:{THEME["text"]};margin-bottom:10px;">'
-        f'{presenter.fmt(rate)} <span class="audash-cell-unit">MYR/g</span></div>',
-        unsafe_allow_html=True,
-    )
+    live_buy = float(market[f"{metal.lower()}_buy"])
+    live_sell = float(market[f"{metal.lower()}_sell"])
+
+    if trade_date < today:
+        rate, quote = _render_backdated_rates(metal, action, trade_date,
+                                              live_buy, live_sell)
+    else:
+        rate = live_buy if action == "BUY" else live_sell
+        quote = None
+        st.markdown(
+            f'<div class="audash-eyebrow" style="margin-top:6px;">'
+            f'Platform {action.lower()} rate</div>'
+            f'<div class="audash-num" style="font-family:{THEME["f_data"]};'
+            f'font-size:18px;color:{THEME["text"]};margin-bottom:10px;">'
+            f'{presenter.fmt(rate)} <span class="audash-cell-unit">MYR/g</span></div>',
+            unsafe_allow_html=True,
+        )
 
     mode = st.radio("Enter by", ["cash", "mass"], horizontal=True, key="trade_mode",
                     format_func=lambda m: "Cash · MYR" if m == "cash" else "Mass · grams")
@@ -228,7 +299,7 @@ def _render_trade_entry(market: dict) -> None:
 
     st.button("Review trade →", key="trade_review", type="primary",
               on_click=_stage_trade,
-              args=(action, metal, rate, amounts, trade_date))
+              args=(action, metal, rate, amounts, trade_date, quote))
 
     error = st.session_state.pop("_trade_error", None)
     if error:

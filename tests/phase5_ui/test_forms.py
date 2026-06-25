@@ -206,6 +206,62 @@ def test_deleting_a_quote_removes_it(tmp_path, monkeypatch):
         assert len(fetch_daily_quotes(conn)) == 0
 
 
+def test_backdated_trade_writes_trade_and_quote(tmp_path, monkeypatch):
+    at = _run(tmp_path, monkeypatch)
+    at.radio[0].set_value("New Trade").run()
+    past = now_utc().date() - timedelta(days=5)
+    _widget(at.date_input, "trade_date").set_value(past).run()
+    k = f"{past.isoformat()}_GOLD"
+    _widget(at.number_input, f"trade_rate_buy_{k}").set_value(425.0).run()
+    _widget(at.number_input, f"trade_rate_sell_{k}").set_value(421.0).run()
+    _widget(at.number_input, "trade_primary").set_value(5000.0).run()  # cash mode
+    _widget(at.button, "trade_review").click().run()
+    _widget(at.button, "trade_submit").click().run()
+
+    assert not at.exception
+    with get_db_connection(str(tmp_path / "audash.db")) as conn:
+        tx = fetch_transactions(conn)
+        q = fetch_daily_quotes(conn)
+    assert len(tx) == 1
+    assert tx.iloc[0]["execution_rate_myr"] == 425.0          # BUY -> buy side
+    assert tx.iloc[0]["timestamp"].startswith(past.isoformat())
+    assert len(q) == 1
+    assert q.iloc[0]["date"] == past.isoformat()
+    assert q.iloc[0]["buy_rate_myr"] == 425.0
+    assert q.iloc[0]["sell_rate_myr"] == 421.0
+
+
+def test_backdated_rates_prefill_from_recorded_quote(tmp_path, monkeypatch):
+    _seed(tmp_path / "audash.db")
+    past = now_utc().date() - timedelta(days=5)
+    with get_db_connection(str(tmp_path / "audash.db")) as conn:
+        write_daily_quote(conn, past.isoformat(), "GOLD", 433.0, 428.0)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    at = AppTest.from_file(APP, default_timeout=60).run()
+
+    at.radio[0].set_value("New Trade").run()
+    _widget(at.date_input, "trade_date").set_value(past).run()
+    k = f"{past.isoformat()}_GOLD"
+    assert _widget(at.number_input, f"trade_rate_buy_{k}").value == 433.0
+    assert _widget(at.number_input, f"trade_rate_sell_{k}").value == 428.0
+    assert not at.exception
+
+
+def test_today_trade_writes_no_quote(tmp_path, monkeypatch):
+    at = _run(tmp_path, monkeypatch)
+    at.radio[0].set_value("New Trade").run()
+    # date defaults to today -> rate stays read-only, no quote is written
+    _widget(at.number_input, "trade_primary").set_value(5000.0).run()
+    _widget(at.button, "trade_review").click().run()
+    _widget(at.button, "trade_submit").click().run()
+
+    assert not at.exception
+    with get_db_connection(str(tmp_path / "audash.db")) as conn:
+        assert len(fetch_transactions(conn)) == 1
+        assert len(fetch_daily_quotes(conn)) == 0
+
+
 def test_voiding_collapses_to_a_single_voided_line(tmp_path, monkeypatch):
     _seed(tmp_path / "audash.db")
     with get_db_connection(str(tmp_path / "audash.db")) as conn:
