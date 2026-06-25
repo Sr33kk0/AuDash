@@ -262,6 +262,19 @@ def test_today_trade_writes_no_quote(tmp_path, monkeypatch):
         assert len(fetch_daily_quotes(conn)) == 0
 
 
+def test_backdated_inverted_rates_warn(tmp_path, monkeypatch):
+    at = _run(tmp_path, monkeypatch)
+    at.radio[0].set_value("New Trade").run()
+    past = now_utc().date() - timedelta(days=5)
+    _widget(at.date_input, "trade_date").set_value(past).run()
+    k = f"{past.isoformat()}_GOLD"
+    _widget(at.number_input, f"trade_rate_buy_{k}").set_value(500.0).run()
+    _widget(at.number_input, f"trade_rate_sell_{k}").set_value(510.0).run()  # buy < sell
+
+    assert any("swap" in w.value.lower() for w in at.warning)
+    assert not at.exception
+
+
 def test_voiding_collapses_to_a_single_voided_line(tmp_path, monkeypatch):
     _seed(tmp_path / "audash.db")
     with get_db_connection(str(tmp_path / "audash.db")) as conn:

@@ -206,6 +206,9 @@ def _render_backdated_rates(metal: str, action: str, trade_date,
     changed pick reseeds the prefill (Streamlit keeps a keyed widget's value).
     """
     quote_row = None
+    # Degrade to the live-rate prefill if the read fails (e.g. worker
+    # mid-write); the prefilled rate stays editable and is confirmed
+    # before any write, so a stale prefill never reaches the ledger.
     try:
         with get_db_connection() as conn:
             quotes = fetch_daily_quotes(conn, metal)
@@ -214,6 +217,7 @@ def _render_backdated_rates(metal: str, action: str, trade_date,
     if quotes is not None and not quotes.empty:
         match = quotes[quotes["date"] == trade_date.isoformat()]
         if not match.empty:
+            # daily_quotes is UNIQUE on (date, metal), so at most one row matches.
             quote_row = match.iloc[-1].to_dict()
 
     prefills = presenter.backdated_rate_prefills(quote_row, live_buy, live_sell)
