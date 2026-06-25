@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     metal              TEXT NOT NULL CHECK (metal IN ('GOLD', 'SILVER')),
     execution_rate_myr REAL NOT NULL,
     mass_grams         REAL NOT NULL,
-    fiat_total_myr     REAL NOT NULL
+    fiat_total_myr     REAL NOT NULL,
+    reverses_id        TEXT REFERENCES transactions(id)
 );
 
 -- Daily AI sentiment cache (worker-computed, UI-read).

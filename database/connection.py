@@ -23,6 +23,21 @@ _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 _SCHEMA_SQL = _SCHEMA_PATH.read_text()
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str,
+                   decl: str) -> None:
+    """Add `column` to `table` if absent. Idempotent and multi-container safe:
+    a concurrent boot that already added it raises 'duplicate column', ignored."""
+    existing = [r["name"] for r in
+                conn.execute(f"PRAGMA table_info({table});").fetchall()]
+    if column in existing:
+        return
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl};")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
+            raise
+
+
 def _resolve_db_path(db_path: str | None) -> str:
     if db_path is not None:
         return db_path
@@ -51,6 +66,7 @@ def get_db_connection(db_path: str | None = None) -> Iterator[sqlite3.Connection
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.executescript(_SCHEMA_SQL)
+        _ensure_column(conn, "transactions", "reverses_id", "TEXT")
         yield conn
         conn.commit()
     except Exception:
@@ -73,23 +89,29 @@ def write_spot_prices(conn: sqlite3.Connection, date: str,
 
 def log_transaction(conn: sqlite3.Connection, action_type: str, metal: str,
                     execution_rate_myr: float, mass_grams: float,
-                    fiat_total_myr: float, timestamp: str | None = None) -> str:
-    """Insert one ledger row; return its generated UUID."""
+                    fiat_total_myr: float, timestamp: str | None = None,
+                    reverses_id: str | None = None) -> str:
+    """Insert one ledger row; return its generated UUID.
+
+    `reverses_id` links a void's offsetting entry back to the trade it reverses
+    (None for an original trade).
+    """
     tx_id = str(uuid.uuid4())
     ts = timestamp or now_utc().isoformat()
     conn.execute(
         "INSERT INTO transactions "
         "(id, timestamp, action_type, metal, execution_rate_myr, "
-        " mass_grams, fiat_total_myr) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?);",
+        " mass_grams, fiat_total_myr, reverses_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         (tx_id, ts, action_type, metal,
-         execution_rate_myr, mass_grams, fiat_total_myr),
+         execution_rate_myr, mass_grams, fiat_total_myr, reverses_id),
     )
     return tx_id
 
 
 _TRANSACTION_COLUMNS = ["id", "timestamp", "action_type", "metal",
-                        "execution_rate_myr", "mass_grams", "fiat_total_myr"]
+                        "execution_rate_myr", "mass_grams", "fiat_total_myr",
+                        "reverses_id"]
 
 
 def fetch_transactions(conn: sqlite3.Connection,
@@ -100,7 +122,7 @@ def fetch_transactions(conn: sqlite3.Connection,
     """
     query = (
         "SELECT id, timestamp, action_type, metal, execution_rate_myr, "
-        "mass_grams, fiat_total_myr FROM transactions"
+        "mass_grams, fiat_total_myr, reverses_id FROM transactions"
     )
     params: tuple = ()
     if metal is not None:
