@@ -567,3 +567,58 @@ def test_backdated_quote_floors_estimated_side_at_zero():
     # Width wider than the entered rate would push the estimate negative; floor it.
     q = presenter.backdated_quote("BUY", 5.0, buy_spread=12.0, sell_spread=8.0)
     assert q == {"buy": 5.0, "sell": 0.0}
+
+
+# --- position-aware presentation (Task 4) ------------------------------------
+
+def _overridden(action, final="SELL"):
+    return {
+        "final_recommendation": final, "quant_bias": "BUY",
+        "sentiment_stale": False, "sentiment_score": 1.0, "net_votes": 3,
+        "position_action": action, "directional_recommendation": "BUY",
+        "pnl_pct": -8.0, "reasons": [],
+    }
+
+
+def test_is_overridden_true_for_each_action():
+    for a in ("EMERGENCY_LIQUIDATION", "TAKE_PROFIT", "AT_CAP",
+              "NOTHING_TO_LIQUIDATE"):
+        assert presenter.is_overridden({"position_action": a}) is True
+
+
+def test_is_overridden_false_when_no_action():
+    assert presenter.is_overridden({"position_action": None}) is False
+    assert presenter.is_overridden({}) is False
+
+
+def test_verdict_reason_describes_emergency_liquidation():
+    msg = presenter.verdict_reason(_overridden("EMERGENCY_LIQUIDATION"))
+    assert "liquidat" in msg.lower() or "stop-loss" in msg.lower()
+
+
+def test_verdict_reason_override_not_mislabeled_as_sentiment():
+    # A stop-loss flips a directional BUY to SELL; it must NOT read as a
+    # sentiment veto (that would look like a concurrency bug).
+    msg = presenter.verdict_reason(_overridden("EMERGENCY_LIQUIDATION"))
+    assert "sentiment" not in msg.lower()
+
+
+def test_gate_detail_decoupled_when_overridden():
+    msg = presenter.gate_detail(_overridden("EMERGENCY_LIQUIDATION"), 0.5, 2.0, 2)
+    assert "decoupled" in msg.lower() or "risk policy" in msg.lower()
+
+
+def test_verdict_view_exposes_is_overridden():
+    view = presenter.verdict_view(_overridden("EMERGENCY_LIQUIDATION"), 2, THEME)
+    assert view["is_overridden"] is True
+    assert view["position_action"] == "EMERGENCY_LIQUIDATION"
+
+
+def test_verdict_view_not_overridden_for_plain_signal():
+    plain = {
+        "final_recommendation": "HOLD", "quant_bias": "HOLD",
+        "sentiment_stale": False, "sentiment_score": 0.0, "net_votes": 0,
+        "reasons": [],
+    }
+    view = presenter.verdict_view(plain, 2, THEME)
+    assert view["is_overridden"] is False

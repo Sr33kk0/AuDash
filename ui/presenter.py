@@ -98,6 +98,29 @@ def gate_color(gate: str, theme: dict) -> str:
     return theme["hold"]
 
 
+_POSITION_LABELS = {
+    "EMERGENCY_LIQUIDATION": "Capital protection · emergency liquidation",
+    "TAKE_PROFIT": "Risk policy · take profit",
+    "AT_CAP": "Risk policy · at position cap",
+    "NOTHING_TO_LIQUIDATE": "Risk policy · nothing to liquidate",
+}
+
+
+def is_overridden(signal_result: dict) -> bool:
+    """True when the position risk desk owns the call (any non-None action).
+
+    When True the UI must render the directional consensus DECOUPLED (muted), so
+    a strong BUY meter never sits under a SELL banner and read as a bug. Covers
+    AT_CAP / NOTHING_TO_LIQUIDATE too — they also sever directional-from-final.
+    """
+    return signal_result.get("position_action") is not None
+
+
+def position_label(action: str) -> str:
+    """Human label for a position action (eyebrow/banner)."""
+    return _POSITION_LABELS[action]
+
+
 # --- GSR balance geometry ----------------------------------------------------
 
 # The assay-balance beam tilts at most this many degrees at the band edge.
@@ -477,6 +500,8 @@ def verdict_view(signal_result: dict, threshold: int, theme: dict) -> dict[str, 
         "gate": gate,
         "gate_label": gate_label(gate),
         "gate_color": gate_color(gate, theme),
+        "is_overridden": is_overridden(signal_result),
+        "position_action": signal_result.get("position_action"),
     }
 
 
@@ -484,6 +509,19 @@ def verdict_view(signal_result: dict, threshold: int, theme: dict) -> dict[str, 
 
 def verdict_reason(signal_result: dict) -> str:
     """One plain-language sentence explaining the final call."""
+    action = signal_result.get("position_action")
+    if action == "EMERGENCY_LIQUIDATION":
+        return ("Your position breached its stop-loss — the risk desk is "
+                "liquidating to protect capital, whatever the signal says.")
+    if action == "TAKE_PROFIT":
+        return ("Your position hit its take-profit and the engine isn't in a "
+                "confirmed buy — the risk desk banks the gain.")
+    if action == "AT_CAP":
+        return ("Math reads buy, but you are at your position cap — no room to "
+                "add, so the call is hold.")
+    if action == "NOTHING_TO_LIQUIDATE":
+        return ("Math reads sell, but you hold nothing to liquidate — the call "
+                "is hold.")
     gate = sentiment_gate(signal_result)
     quant = signal_result["quant_bias"]
     if gate == "stale":
@@ -499,6 +537,10 @@ def verdict_reason(signal_result: dict) -> str:
 def gate_detail(signal_result: dict, age: float | None,
                 max_age: float, threshold: int) -> str:
     """The consensus panel's explanation of the sentiment gate."""
+    if is_overridden(signal_result):
+        label = position_label(signal_result["position_action"])
+        return (f"Directional alpha decoupled by risk policy — {label} took the "
+                "call. The consensus below reflects the math only.")
     gate = sentiment_gate(signal_result)
     quant = signal_result["quant_bias"]
     score = signal_result["sentiment_score"]
@@ -553,6 +595,11 @@ def settings_groups(settings: dict) -> list[dict[str, object]]:
             _field("GSR band σ", "gsr_band_deviations", settings, "number"),
             _field("Quant vote threshold", "quant_vote_threshold", settings, "number"),
             _field("Sentiment max age (days)", "sentiment_max_age_days", settings, "number"),
+        ]},
+        {"title": "Risk policy", "fields": [
+            _field("Stop-loss (%)", "stop_loss_pct", settings, "number"),
+            _field("Take-profit (%)", "take_profit_pct", settings, "number"),
+            _field("Max position (g)", "max_position_grams", settings, "number"),
         ]},
         {"title": "Spread engine", "fields": [
             _field("Default buy spread (MYR/g)", "default_buy_spread", settings),
