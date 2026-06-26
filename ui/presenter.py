@@ -486,6 +486,7 @@ def verdict_view(signal_result: dict, threshold: int, theme: dict) -> dict[str, 
     """Assemble the verdict-hero + consensus view-model."""
     final = signal_result["final_recommendation"]
     quant = signal_result["quant_bias"]
+    overridden = is_overridden(signal_result)
     gate = sentiment_gate(signal_result)
     return {
         "word": final,
@@ -498,9 +499,9 @@ def verdict_view(signal_result: dict, threshold: int, theme: dict) -> dict[str, 
         "quant_bias": quant,
         "quant_color": verdict_color(quant, theme),
         "gate": gate,
-        "gate_label": gate_label(gate),
-        "gate_color": gate_color(gate, theme),
-        "is_overridden": is_overridden(signal_result),
+        "gate_label": "Decoupled" if overridden else gate_label(gate),
+        "gate_color": theme["muted"] if overridden else gate_color(gate, theme),
+        "is_overridden": overridden,
         "position_action": signal_result.get("position_action"),
     }
 
@@ -540,7 +541,7 @@ def gate_detail(signal_result: dict, age: float | None,
     if is_overridden(signal_result):
         label = position_label(signal_result["position_action"])
         return (f"Directional alpha decoupled by risk policy — {label} took the "
-                "call. The consensus below reflects the math only.")
+                "call. The consensus shown reflects the math only.")
     gate = sentiment_gate(signal_result)
     quant = signal_result["quant_bias"]
     score = signal_result["sentiment_score"]

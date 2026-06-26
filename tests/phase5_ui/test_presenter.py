@@ -622,3 +622,26 @@ def test_verdict_view_not_overridden_for_plain_signal():
     }
     view = presenter.verdict_view(plain, 2, THEME)
     assert view["is_overridden"] is False
+
+
+def test_verdict_view_neutralizes_gate_badge_on_override():
+    # EMERGENCY_LIQUIDATION: quant_bias=BUY, fresh sentiment, final=SELL.
+    # sentiment_gate() returns "vetoed" but the risk desk owns the call —
+    # the badge must show "Decoupled"/muted, NOT "Vetoed"/sell.
+    view = presenter.verdict_view(_overridden("EMERGENCY_LIQUIDATION"), 2, THEME)
+    assert view["gate_label"] == "Decoupled"
+    assert view["gate_color"] == THEME["muted"]
+    assert view["gate_color"] != THEME["sell"]  # explicitly NOT the red mislabel
+
+
+def test_verdict_view_keeps_real_gate_badge_when_not_overridden():
+    # A genuine sentiment veto (no override): quant=BUY, final=HOLD, fresh
+    # negative sentiment.  The real badge must survive unchanged.
+    sig = {
+        "quant_bias": "BUY", "final_recommendation": "HOLD",
+        "sentiment_stale": False, "sentiment_score": -1.0, "net_votes": 3,
+        "position_action": None, "reasons": [],
+    }
+    view = presenter.verdict_view(sig, 2, THEME)
+    assert view["gate_label"] == "Vetoed"
+    assert view["gate_color"] == THEME["sell"]
