@@ -142,3 +142,20 @@ def test_load_dashboard_model_no_quotes_uses_config_fallback(db_conn):
     # Default spreads are 0.0 -> buy/sell collapse onto spot; n_quotes is 0.
     assert model["quotes"]["GOLD"]["n_quotes"] == 0
     assert model["market"]["gold_buy"] == pytest.approx(model["spot_today"]["GOLD"])
+
+
+def test_position_policy_stop_loss_surfaces_in_model(db_conn):
+    _seed_spot(db_conn)
+    # Buy 10 g of gold at a far-above-market rate -> deep unrealized loss at the
+    # current sell rate -> stop-loss must trip.
+    log_transaction(db_conn, "BUY", "GOLD", 900.0, 10.0, 9000.0)
+    write_sentiment_snapshot(db_conn, now_utc().date().isoformat(),
+                             1.5, "Risk-on", "Fresh positive read", ["h1"])
+
+    model = data_access.load_dashboard_model(db_conn, now=now_utc())
+    sig = model["signal_result"]
+
+    assert sig["position_action"] == "EMERGENCY_LIQUIDATION"
+    assert sig["final_recommendation"] == "SELL"
+    assert "directional_recommendation" in sig
+    assert sig["pnl_pct"] is not None and sig["pnl_pct"] < 0

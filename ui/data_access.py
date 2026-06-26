@@ -18,6 +18,7 @@ from analytics.quantitative import (
     compute_gold_silver_ratio, compute_relative_strength_index,
     compute_volatility_bands,
 )
+from analytics.risk import apply_position_policy
 from analytics.signals import generate_trade_signal
 from analytics.spread import derive_quote_spreads, per_gram, platform_rates
 from database.connection import (
@@ -164,6 +165,17 @@ def load_dashboard_model(conn: sqlite3.Connection, *,
         rsi_overbought=float(s["rsi_overbought"]),
         quant_vote_threshold=threshold,
         sentiment_max_age_days=float(s["sentiment_max_age_days"]),
+    )
+    # Risk desk (Asymmetric Agency): the position may INITIATE a REDUCE_ONLY
+    # stop-loss / take-profit SELL or veto an impossible / over-capacity call.
+    signal_result = apply_position_policy(
+        signal_result,
+        holding_grams=pf["holding_grams"],
+        cost_basis=pf["cost_basis"],
+        current_sell_rate=gold_rates["sell"],
+        stop_loss_pct=float(s["stop_loss_pct"]),
+        take_profit_pct=float(s["take_profit_pct"]),
+        max_position_grams=float(s["max_position_grams"]),
     )
 
     market = {
