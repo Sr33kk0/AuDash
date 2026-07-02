@@ -89,7 +89,7 @@ def _default_generate_content(prompt: str, *, api_key: str, model_name: str) -> 
     """
     resp = requests.post(
         _API_URL.format(model=model_name),
-        params={"key": api_key},
+        headers={"x-goog-api-key": api_key},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json"},

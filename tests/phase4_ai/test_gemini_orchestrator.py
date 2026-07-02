@@ -139,8 +139,8 @@ class _FakeResp:
 def test_default_generate_content_returns_model_text(monkeypatch):
     captured = {}
 
-    def fake_post(url, params=None, json=None, timeout=None):
-        captured.update(url=url, params=params, json=json)
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured.update(url=url, headers=headers, json=json)
         return _FakeResp(_GEMINI_OK_PAYLOAD)
 
     monkeypatch.setattr(gemini_orchestrator.requests, "post", fake_post)
@@ -152,22 +152,23 @@ def test_default_generate_content_returns_model_text(monkeypatch):
 def test_default_generate_content_targets_model_key_and_prompt(monkeypatch):
     captured = {}
 
-    def fake_post(url, params=None, json=None, timeout=None):
-        captured.update(url=url, params=params, json=json)
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured.update(url=url, headers=headers, json=json)
         return _FakeResp(_GEMINI_OK_PAYLOAD)
 
     monkeypatch.setattr(gemini_orchestrator.requests, "post", fake_post)
     _default_generate_content("MY PROMPT", api_key="SECRET",
                               model_name="gemini-3-flash-preview")
     assert "gemini-3-flash-preview:generateContent" in captured["url"]
-    assert captured["params"]["key"] == "SECRET"   # key in query, not URL path
+    assert "SECRET" not in captured["url"]   # key never lands in the URL/logs
+    assert captured["headers"]["x-goog-api-key"] == "SECRET"
     assert "MY PROMPT" in str(captured["json"])     # prompt in request body
 
 
 def test_default_generate_content_requests_json_mime(monkeypatch):
     captured = {}
 
-    def fake_post(url, params=None, json=None, timeout=None):
+    def fake_post(url, headers=None, json=None, timeout=None):
         captured.update(json=json)
         return _FakeResp(_GEMINI_OK_PAYLOAD)
 
@@ -179,7 +180,7 @@ def test_default_generate_content_requests_json_mime(monkeypatch):
 def test_default_generate_content_uses_generous_timeout(monkeypatch):
     captured = {}
 
-    def fake_post(url, params=None, json=None, timeout=None):
+    def fake_post(url, headers=None, json=None, timeout=None):
         captured["timeout"] = timeout
         return _FakeResp(_GEMINI_OK_PAYLOAD)
 
