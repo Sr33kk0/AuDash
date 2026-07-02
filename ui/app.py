@@ -243,7 +243,7 @@ def render_dashboard(model: dict) -> None:
     if chart["dates"]:
         price_fig = charts.build_price_figure(
             chart["dates"], chart["price"], chart["bands"], chart["markers"], THEME)
-        st.plotly_chart(price_fig, use_container_width=True,
+        st.plotly_chart(price_fig, width="stretch",
                         config={"displayModeBar": False})
         st.markdown('<div class="audash-eyebrow" role="heading" aria-level="3" style="margin:6px 0 8px;">'
                     'RSI · 14</div>', unsafe_allow_html=True)
@@ -251,7 +251,7 @@ def render_dashboard(model: dict) -> None:
             chart["dates"], chart["rsi"],
             float(model["settings"]["rsi_oversold"]),
             float(model["settings"]["rsi_overbought"]), THEME)
-        st.plotly_chart(rsi_fig, use_container_width=True,
+        st.plotly_chart(rsi_fig, width="stretch",
                         config={"displayModeBar": False})
     else:
         st.markdown(f'<p style="font-family:{THEME["f_body"]};color:{THEME["muted"]};">'
