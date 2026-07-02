@@ -47,12 +47,12 @@ def build_sentiment_prompt(headlines: list[dict[str, str]],
     else:
         metrics_block = "(no market metrics provided)"
     return (
-        "You are an unemotional macro analyst scoring gold-market sentiment.\n"
-        "Rate how bullish recent macro news is for GOLD on a scale from -5 "
-        "(strongly bearish) to 5 (strongly bullish).\n\n"
+        "You are an institutional commodities analyst. Analyze the following headlines and return a strict JSON object.\n"
+        "Rule 1: Weigh US Federal Reserve interest rate rhetoric heavily (Rate hikes = bearish for Gold, Rate cuts = bullish).\n"
+        "Rule 2: Weigh geopolitical instability as bullish for Gold (Safe-haven asset).\n\n"
         f"Recent headlines:\n{headline_block}\n\n"
         f"Current market metrics:\n{metrics_block}\n\n"
-        "Respond with ONLY a JSON object (no prose) with exactly these keys:\n"
+        "Output exactly this JSON schema:\n"
         '  "sentiment_score": a number from -5 to 5,\n'
         '  "dominant_risk_factor": a short string naming the key risk,\n'
         '  "analytical_summary": a one or two sentence rationale.\n'
