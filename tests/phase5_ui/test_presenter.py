@@ -763,3 +763,21 @@ def test_briefing_watch_reports_risk_override_first():
     watch = presenter.build_morning_briefing(model, THEME)[3]
     assert "emergency liquidation" in watch["text"].lower()
     assert watch["warn"] is True
+    assert watch["color"] == THEME["sell"]
+
+
+def test_briefing_watch_benign_override_does_not_warn():
+    model = _briefing_model(market={"holdings": 12.5, "pnl": -900.0})
+    model["signal_result"]["position_action"] = "AT_CAP"
+    watch = presenter.build_morning_briefing(model, THEME)[3]
+    assert "at position cap" in watch["text"].lower()
+    assert watch["warn"] is False
+    assert watch["color"] == THEME["text"]
+
+
+def test_sentiment_text_fallback_uses_score_when_no_summary():
+    text, warn = presenter._sentiment_text(
+        {"sentiment_score": 1.5, "analytical_summary": None},
+        age=0.5, stale=False, max_age=2.0)
+    assert text.startswith("Score +1.5 on record.")
+    assert warn is False

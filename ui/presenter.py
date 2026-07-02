@@ -607,7 +607,7 @@ def _overnight_text(spot_today: dict, spot_prev: dict, gsr_band: dict) -> str:
     parts = []
     for metal in ("GOLD", "SILVER"):
         prev, cur = spot_prev.get(metal), spot_today.get(metal, 0.0)
-        if prev:
+        if prev:  # ponytail: 0.0 treated as missing — a real spot price is never 0, and it guards the division
             delta = cur - prev
             parts.append(f"{metal.title()} {signed(delta)} MYR/g "
                          f"({signed(delta / prev * 100.0, 1)}%)")
@@ -662,9 +662,11 @@ def build_morning_briefing(model: dict, theme: dict) -> list[dict]:
 
     holdings, pnl = model["market"]["holdings"], model["market"]["pnl"]
     if is_overridden(sig):
+        action = sig["position_action"]
+        alarm = action in ("EMERGENCY_LIQUIDATION", "TAKE_PROFIT")
         lines.append(_briefing_line(
-            "Watch", position_label(sig["position_action"]),
-            theme["sell"], warn=True))
+            "Watch", position_label(action),
+            theme["sell"] if alarm else theme["text"], warn=alarm))
     elif holdings > 0:
         lines.append(_briefing_line(
             "Watch",

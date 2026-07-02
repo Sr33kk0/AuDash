@@ -101,7 +101,6 @@ def test_stale_verdict_html_stays_one_block(tmp_path, monkeypatch):
     verdict = next(m.value for m in at.markdown
                    if "Sentiment is stale" in m.value
                    and 'class="audash-verdict-reason"' in m.value)
-    assert 'class="audash-verdict-reason"' in verdict
     interior = verdict.splitlines()[1:-1]  # edges are stripped by clean_text
     assert all(line.strip() for line in interior), \
         "blank line inside verdict HTML closes the block -> raw text leaks"
