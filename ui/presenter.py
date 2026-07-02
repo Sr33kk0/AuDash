@@ -593,6 +593,86 @@ def sentiment_refresh_note(sentiment_score: float, quant_bias: str) -> str:
     return f"{base} It now feeds the live {quant_bias} gate."
 
 
+# --- morning briefing ----------------------------------------------------------
+# The 2-minute morning-note read: Top Call → Overnight → Sentiment → Watch.
+# Format follows the equity-research morning-note convention: opinionated,
+# lead with the call, "no news" is a valid line.
+
+def _briefing_line(label: str, text: str, color: str,
+                   warn: bool = False) -> dict:
+    return {"label": label, "text": text, "color": color, "warn": warn}
+
+
+def _overnight_text(spot_today: dict, spot_prev: dict, gsr_band: dict) -> str:
+    parts = []
+    for metal in ("GOLD", "SILVER"):
+        prev, cur = spot_prev.get(metal), spot_today.get(metal, 0.0)
+        if prev:
+            delta = cur - prev
+            parts.append(f"{metal.title()} {signed(delta)} MYR/g "
+                         f"({signed(delta / prev * 100.0, 1)}%)")
+    if not parts:
+        return "No new spot reading since the previous session."
+    pos = gsr_position(gsr_band["value"], gsr_band["lower"], gsr_band["upper"])
+    parts.append(f"GSR {fmt(gsr_band['value'], 1)} — {pos['label']}")
+    return " · ".join(parts)
+
+
+def _sentiment_text(snapshot: dict | None, age: float | None,
+                    stale: bool, max_age: float) -> tuple[str, bool]:
+    if snapshot is None:
+        return "No sentiment snapshot on record — a fresh read is needed.", True
+    summary = snapshot.get("analytical_summary") or (
+        f"Score {signed(float(snapshot['sentiment_score']), 1)} on record.")
+    if stale:
+        return (f"{summary} — {age:.1f} d old, beyond the {max_age:g} d max. "
+                "Stale sentiment forces HOLD."), True
+    if age is not None:
+        when = f"{age * 24:.0f} h ago" if age < 2.0 else f"{age:.1f} d ago"
+        return f"{summary} (as of {when})", False
+    return summary, False
+
+
+def build_morning_briefing(model: dict, theme: dict) -> list[dict]:
+    """Ordered briefing lines {label, text, color, warn} for the panel.
+
+    Three lines always (Top call, Overnight, Sentiment); a Watch line only when
+    the risk desk owns the call or a position is open — silence means nothing
+    to watch, not missing data.
+    """
+    sig = model["signal_result"]
+    final = sig["final_recommendation"]
+
+    lines = [
+        _briefing_line("Top call",
+                       f"{verdict_shape(final)} {final} — {verdict_reason(sig)}",
+                       verdict_color(final, theme)),
+        _briefing_line("Overnight",
+                       _overnight_text(model["spot_today"], model["spot_prev"],
+                                       model["gsr_band"]),
+                       theme["text"]),
+    ]
+    senti_text, senti_warn = _sentiment_text(
+        model["sentiment"], model["sentiment_age"], sig["sentiment_stale"],
+        float(model["settings"]["sentiment_max_age_days"]))
+    lines.append(_briefing_line(
+        "Sentiment", senti_text,
+        theme["sell"] if senti_warn else theme["text"], senti_warn))
+
+    holdings, pnl = model["market"]["holdings"], model["market"]["pnl"]
+    if is_overridden(sig):
+        lines.append(_briefing_line(
+            "Watch", position_label(sig["position_action"]),
+            theme["sell"], warn=True))
+    elif holdings > 0:
+        lines.append(_briefing_line(
+            "Watch",
+            f"Open position {fmt(holdings, 3)} g gold · "
+            f"unrealized PnL {signed(pnl)} MYR.",
+            theme["text"]))
+    return lines
+
+
 # --- settings grouping -------------------------------------------------------
 
 def _field(label: str, key: str, settings: dict, field_type: str = "default") -> dict[str, str]:

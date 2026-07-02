@@ -653,3 +653,102 @@ def test_verdict_view_keeps_real_gate_badge_when_not_overridden():
     view = presenter.verdict_view(sig, 2, THEME)
     assert view["gate_label"] == "Vetoed"
     assert view["gate_color"] == THEME["sell"]
+
+
+# --- morning briefing ---------------------------------------------------------
+
+def _briefing_model(**overrides) -> dict:
+    """Minimal dashboard-model stub for build_morning_briefing."""
+    model = {
+        "signal_result": {
+            "final_recommendation": "BUY", "quant_bias": "BUY",
+            "sentiment_stale": False, "sentiment_score": 1.5,
+            "net_votes": 2, "position_action": None,
+        },
+        "sentiment": {"sentiment_score": 1.5,
+                      "analytical_summary": "Risk appetite firm.",
+                      "fetched_at": "2026-07-02T00:00:00+00:00"},
+        "sentiment_age": 0.5,
+        "settings": {"sentiment_max_age_days": "2"},
+        "spot_today": {"GOLD": 500.0, "SILVER": 6.0},
+        "spot_prev": {"GOLD": 495.0, "SILVER": 6.1},
+        "gsr_band": {"value": 83.3, "lower": 80.0, "upper": 90.0},
+        "market": {"holdings": 0.0, "pnl": 0.0},
+    }
+    model.update(overrides)
+    return model
+
+
+def test_briefing_top_call_carries_verdict_shape_and_reason():
+    lines = presenter.build_morning_briefing(_briefing_model(), THEME)
+    top = lines[0]
+    assert top["label"] == "Top call"
+    assert top["text"].startswith("▲ BUY")
+    assert "sentiment confirms" in top["text"]
+    assert top["color"] == THEME["buy"]
+    assert top["warn"] is False
+
+
+def test_briefing_overnight_reports_both_metals_and_gsr():
+    lines = presenter.build_morning_briefing(_briefing_model(), THEME)
+    overnight = lines[1]
+    assert overnight["label"] == "Overnight"
+    assert "Gold +5.00 MYR/g (+1.0%)" in overnight["text"]
+    assert "Silver -0.10 MYR/g (-1.6%)" in overnight["text"]
+    assert "GSR 83.3" in overnight["text"]
+    assert "Within band" in overnight["text"]
+
+
+def test_briefing_overnight_degrades_without_previous_spot():
+    model = _briefing_model(spot_prev={"GOLD": None, "SILVER": None})
+    overnight = presenter.build_morning_briefing(model, THEME)[1]
+    assert overnight["text"] == "No new spot reading since the previous session."
+    assert overnight["warn"] is False
+
+
+def test_briefing_sentiment_line_shows_summary_and_age():
+    lines = presenter.build_morning_briefing(_briefing_model(), THEME)
+    senti = lines[2]
+    assert senti["label"] == "Sentiment"
+    assert "Risk appetite firm." in senti["text"]
+    assert "12 h ago" in senti["text"]
+    assert senti["warn"] is False
+
+
+def test_briefing_sentiment_stale_warns():
+    model = _briefing_model(sentiment_age=3.2)
+    model["signal_result"]["sentiment_stale"] = True
+    model["signal_result"]["final_recommendation"] = "HOLD"
+    senti = presenter.build_morning_briefing(model, THEME)[2]
+    assert senti["warn"] is True
+    assert "3.2 d old" in senti["text"]
+    assert "HOLD" in senti["text"]
+
+
+def test_briefing_sentiment_missing_warns():
+    model = _briefing_model(sentiment=None, sentiment_age=None)
+    model["signal_result"]["sentiment_stale"] = True
+    senti = presenter.build_morning_briefing(model, THEME)[2]
+    assert senti["warn"] is True
+    assert "No sentiment snapshot" in senti["text"]
+
+
+def test_briefing_watch_omitted_when_flat_and_unoverridden():
+    lines = presenter.build_morning_briefing(_briefing_model(), THEME)
+    assert len(lines) == 3
+
+
+def test_briefing_watch_reports_open_position():
+    model = _briefing_model(market={"holdings": 12.5, "pnl": 62.5})
+    watch = presenter.build_morning_briefing(model, THEME)[3]
+    assert watch["label"] == "Watch"
+    assert "12.500 g" in watch["text"]
+    assert "+62.50 MYR" in watch["text"]
+
+
+def test_briefing_watch_reports_risk_override_first():
+    model = _briefing_model(market={"holdings": 12.5, "pnl": -900.0})
+    model["signal_result"]["position_action"] = "EMERGENCY_LIQUIDATION"
+    watch = presenter.build_morning_briefing(model, THEME)[3]
+    assert "emergency liquidation" in watch["text"].lower()
+    assert watch["warn"] is True
