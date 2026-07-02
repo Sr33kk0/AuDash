@@ -1,0 +1,20 @@
+# Streamlit dashboard: reads the shared DB the worker writes.
+FROM python:3.12-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+
+COPY requirements-web.txt .
+RUN pip install --no-cache-dir -r requirements-web.txt
+
+COPY .streamlit/ .streamlit/
+COPY database/ database/
+COPY utils/ utils/
+COPY analytics/ analytics/
+# worker/ + ai/ back the on-demand "Refresh sentiment" button (ui/forms.py).
+COPY ai/ ai/
+COPY worker/ worker/
+COPY ui/ ui/
+
+EXPOSE 8501
+CMD ["streamlit", "run", "ui/app.py", "--server.port=8501", "--server.address=0.0.0.0"]

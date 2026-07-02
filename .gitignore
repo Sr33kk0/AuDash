@@ -16,6 +16,7 @@ PRODUCT.md
 data/
 # Local mock instance (seed script, source data, generated DB) — dev-only
 mock/
+docker-compose.override.yml
 *.db
 *.db-wal
 *.db-shm

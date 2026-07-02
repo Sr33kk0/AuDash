@@ -1,0 +1,15 @@
+# Headless ingestion daemon: daily spot prices + AI sentiment into the shared DB.
+FROM python:3.12-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+
+COPY requirements-worker.txt .
+RUN pip install --no-cache-dir -r requirements-worker.txt
+
+COPY database/ database/
+COPY utils/ utils/
+COPY ai/ ai/
+COPY worker/ worker/
+
+CMD ["python", "-m", "worker.main"]

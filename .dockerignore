@@ -1,0 +1,15 @@
+# Keep the build context to source only (venvs and data dominate otherwise).
+.git
+.venv
+venv
+data
+mock
+docs
+tests
+.pytest_cache
+.impeccable
+.superpowers
+**/__pycache__
+*.db
+*.db-*
+.env

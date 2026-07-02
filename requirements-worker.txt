@@ -2,3 +2,5 @@ requests>=2.31
 feedparser>=6.0
 pandas>=2.0
 numpy>=1.26
+# zoneinfo fallback: python-slim images ship no system tz database.
+tzdata>=2024.1

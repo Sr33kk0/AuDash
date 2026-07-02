@@ -1,0 +1,34 @@
+# Two services, one shared named volume: SQLite (WAL) on /data is the only
+# channel between them. Schema bootstrap happens on first connect (no init
+# container) — whichever service starts first creates the DB safely.
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - path: .env
+        required: false   # worker fails fast with a clear error if keys are missing
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - audash-data:/data
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATA_DIR: /data
+    ports:
+      - "8501:8501"
+    volumes:
+      - audash-data:/data
+    restart: unless-stopped
+
+volumes:
+  audash-data:
