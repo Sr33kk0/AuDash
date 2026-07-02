@@ -725,6 +725,17 @@ def test_briefing_sentiment_stale_warns():
     assert "HOLD" in senti["text"]
 
 
+def test_briefing_sentiment_stale_age_unknown_warns():
+    model = _briefing_model(sentiment_age=None)
+    model["signal_result"]["sentiment_stale"] = True
+    model["signal_result"]["final_recommendation"] = "HOLD"
+    senti = presenter.build_morning_briefing(model, THEME)[2]
+    assert senti["warn"] is True
+    assert "d old" not in senti["text"]
+    assert "beyond the" in senti["text"]
+    assert "HOLD" in senti["text"]
+
+
 def test_briefing_sentiment_missing_warns():
     model = _briefing_model(sentiment=None, sentiment_age=None)
     model["signal_result"]["sentiment_stale"] = True

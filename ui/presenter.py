@@ -625,7 +625,8 @@ def _sentiment_text(snapshot: dict | None, age: float | None,
     summary = snapshot.get("analytical_summary") or (
         f"Score {signed(float(snapshot['sentiment_score']), 1)} on record.")
     if stale:
-        return (f"{summary} — {age:.1f} d old, beyond the {max_age:g} d max. "
+        age_txt = f"{age:.1f} d old, " if age is not None else ""
+        return (f"{summary} — {age_txt}beyond the {max_age:g} d max. "
                 "Stale sentiment forces HOLD."), True
     if age is not None:
         when = f"{age * 24:.0f} h ago" if age < 2.0 else f"{age:.1f} d ago"
