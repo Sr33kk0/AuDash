@@ -9,6 +9,12 @@ from worker.api_client import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch):
+    """Retries must not actually pause the test suite."""
+    monkeypatch.setattr(api_client.time, "sleep", lambda _seconds: None)
+
+
 def test_grams_per_troy_oz_constant():
     assert GRAMS_PER_TROY_OZ == 31.1034768
 
@@ -93,6 +99,47 @@ def test_transport_error_raises_bullion_fetch_error(monkeypatch):
     monkeypatch.setattr(api_client.requests, "get", fake_get)
     with pytest.raises(BullionFetchError):
         fetch_raw_bullion_rates("KEY")
+
+
+def test_retries_transient_error_then_succeeds(monkeypatch):
+    calls = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(1)
+        if len(calls) < 3:
+            raise api_client.requests.ConnectionError("network blip")
+        return _FakeResponse({"success": True, "rates": {"XAU": 0.0001, "XAG": 0.01}})
+
+    monkeypatch.setattr(api_client.requests, "get", fake_get)
+    rates = fetch_raw_bullion_rates("KEY")
+    assert rates["gold_rate_per_oz"] == pytest.approx(10000.0)
+    assert len(calls) == 3
+
+
+def test_exhausts_retries_then_raises(monkeypatch):
+    calls = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(1)
+        raise api_client.requests.ConnectionError("network down")
+
+    monkeypatch.setattr(api_client.requests, "get", fake_get)
+    with pytest.raises(BullionFetchError):
+        fetch_raw_bullion_rates("KEY")
+    assert len(calls) == 5
+
+
+def test_retry_backoff_is_exponential(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(api_client.time, "sleep", sleeps.append)
+
+    def fake_get(url, params=None, timeout=None):
+        raise api_client.requests.ConnectionError("network down")
+
+    monkeypatch.setattr(api_client.requests, "get", fake_get)
+    with pytest.raises(BullionFetchError):
+        fetch_raw_bullion_rates("KEY")
+    assert sleeps == [1, 2, 4, 8]
 
 
 def test_api_key_not_leaked_in_error(monkeypatch):

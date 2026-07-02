@@ -7,6 +7,7 @@ loop can swallow them without dying.
 """
 
 import sqlite3
+import time
 
 import requests
 
@@ -15,6 +16,7 @@ from utils.timeutil import now_utc
 
 GRAMS_PER_TROY_OZ = 31.1034768
 _API_URL = "https://api.metalpriceapi.com/v1/latest"
+_MAX_ATTEMPTS = 5
 
 
 class BullionFetchError(Exception):
@@ -41,15 +43,19 @@ def fetch_raw_bullion_rates(api_key: str, *, base: str = "MYR",
     Raises BullionFetchError on transport, decode, or validation failure.
     """
     params = {"api_key": api_key, "base": base, "symbols": ",".join(symbols)}
-    try:
-        resp = requests.get(_API_URL, params=params, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.RequestException as exc:
-        detail = str(exc).replace(api_key, "***") if api_key else str(exc)
-        raise BullionFetchError(f"HTTP request failed: {detail}") from None
-    except ValueError as exc:  # json decode error
-        raise BullionFetchError(f"Invalid JSON payload: {exc}") from exc
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            resp = requests.get(_API_URL, params=params, timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except requests.RequestException as exc:
+            if attempt == _MAX_ATTEMPTS - 1:
+                detail = str(exc).replace(api_key, "***") if api_key else str(exc)
+                raise BullionFetchError(f"HTTP request failed: {detail}") from None
+            time.sleep(2 ** attempt)
+        except ValueError as exc:  # json decode error
+            raise BullionFetchError(f"Invalid JSON payload: {exc}") from exc
 
     if not data.get("success", False):
         raise BullionFetchError(f"API returned unsuccessful payload: {data}")
