@@ -124,6 +124,8 @@ def load_dashboard_model(conn: sqlite3.Connection, *,
         gsr_lower_series = gsr_mid - gsr_dev * gsr_sd
         spot_g_today = float(gold_g.iloc[-1])
         silver_g_today = float(silver_g.iloc[-1])
+        gold_g_prev = float(gold_g.iloc[-2]) if len(gold_g) >= 2 else None
+        silver_g_prev = float(silver_g.iloc[-2]) if len(silver_g) >= 2 else None
         spot_index = pd.Series(gold_g.values, index=dates)
         silver_index = pd.Series(silver_g.values, index=dates)
     else:
@@ -134,6 +136,7 @@ def load_dashboard_model(conn: sqlite3.Connection, *,
         dev_series = cov_series = None
         bands = pd.DataFrame(columns=["middle", "upper", "lower", "percent_b"])
         spot_g_today = silver_g_today = 0.0
+        gold_g_prev = silver_g_prev = None
         spot_index = silver_index = pd.Series(dtype=float)
 
     # Latest indicator readings (neutralized when history is too short).
@@ -252,5 +255,6 @@ def load_dashboard_model(conn: sqlite3.Connection, *,
                        ("buy_spread", "sell_spread", "n_quotes", "quoted_today")},
         },
         "spot_today": {"GOLD": spot_g_today, "SILVER": silver_g_today},
+        "spot_prev": {"GOLD": gold_g_prev, "SILVER": silver_g_prev},
         "today": today,
     }

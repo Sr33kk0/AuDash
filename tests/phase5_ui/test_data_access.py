@@ -182,3 +182,17 @@ def test_position_policy_stop_loss_surfaces_in_model(db_conn):
     assert sig["final_recommendation"] == "SELL"
     assert "directional_recommendation" in sig
     assert sig["pnl_pct"] is not None and sig["pnl_pct"] < 0
+
+
+def test_load_dashboard_model_exposes_previous_spot(db_conn):
+    _seed_spot(db_conn)  # 30 descending days
+    model = data_access.load_dashboard_model(db_conn, now=now_utc())
+    prev = model["spot_prev"]
+    # yesterday's gold is 60 MYR/oz higher than today's; per-gram prev > today
+    assert prev["GOLD"] > model["spot_today"]["GOLD"]
+    assert prev["SILVER"] > model["spot_today"]["SILVER"]
+
+
+def test_load_dashboard_model_spot_prev_none_without_history(db_conn):
+    model = data_access.load_dashboard_model(db_conn, now=now_utc())
+    assert model["spot_prev"] == {"GOLD": None, "SILVER": None}
