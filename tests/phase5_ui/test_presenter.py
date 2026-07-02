@@ -326,7 +326,7 @@ def test_settings_groups_cover_keys_and_mask_api_keys():
         "quant_vote_threshold": "2", "sentiment_max_age_days": "2",
         "default_buy_spread": "12.0", "default_sell_spread": "8.0",
         "BASE_CURRENCY": "MYR", "TIMEZONE": "Asia/Kuala_Lumpur",
-        "GEMINI_API_KEY": "secret", "COMMODITY_API_KEY": "secret2",
+        "GEMINI_API_KEY": "secret", "METALPRICEAPI_KEY": "secret2",
     }
     groups = presenter.settings_groups(settings)
     titles = [g["title"] for g in groups]

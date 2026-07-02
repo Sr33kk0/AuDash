@@ -110,7 +110,7 @@ def _require_env(name: str) -> str:
 def initialize_background_daemon(*, max_cycles: int | None = None,
                                  sleep_fn: Callable[[float], None] = time.sleep) -> None:
     """Verify prerequisites, then loop: ingest then sleep until next window."""
-    api_key = _require_env("COMMODITY_API_KEY")
+    api_key = _require_env("METALPRICEAPI_KEY")
     logger.info("Worker daemon starting")
     cycles = 0
     while max_cycles is None or cycles < max_cycles:

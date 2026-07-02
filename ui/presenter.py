@@ -789,6 +789,6 @@ def settings_groups(settings: dict) -> list[dict[str, object]]:
             _field("Timezone", "TIMEZONE", settings),
             _field("Gemini model", "GEMINI_MODEL", settings),
             _field("Gemini API key", "GEMINI_API_KEY", settings, "password"),
-            _field("MetalPrice API key", "COMMODITY_API_KEY", settings, "password"),
+            _field("MetalPrice API key", "METALPRICEAPI_KEY", settings, "password"),
         ]},
     ]

@@ -26,13 +26,13 @@ def test_run_daily_cycle_success_invokes_pipeline(db_conn, monkeypatch):
 
 
 def test_missing_api_key_raises(monkeypatch):
-    monkeypatch.delenv("COMMODITY_API_KEY", raising=False)
+    monkeypatch.delenv("METALPRICEAPI_KEY", raising=False)
     with pytest.raises(RuntimeError):
         initialize_background_daemon(max_cycles=1)
 
 
 def test_runs_bounded_cycles_with_injected_sleep(monkeypatch, tmp_path):
-    monkeypatch.setenv("COMMODITY_API_KEY", "KEY")
+    monkeypatch.setenv("METALPRICEAPI_KEY", "KEY")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     cycles = {"n": 0}
     sleeps = []
@@ -76,7 +76,7 @@ def test_run_daily_cycle_exhausts_retries_returns_false(db_conn, monkeypatch, ca
 
 
 def test_loop_survives_db_open_failure(monkeypatch):
-    monkeypatch.setenv("COMMODITY_API_KEY", "KEY")
+    monkeypatch.setenv("METALPRICEAPI_KEY", "KEY")
 
     def boom(*args, **kwargs):
         raise RuntimeError("db locked")
@@ -92,7 +92,7 @@ def test_daemon_pads_sleep_past_window_boundary(monkeypatch, tmp_path):
     # A bare time.sleep can return a hair early; landing exactly on the window
     # would let next_local_time_utc see it as "not yet passed" and fire the same
     # window twice. The daemon adds a fixed guard so the sleep always crosses it.
-    monkeypatch.setenv("COMMODITY_API_KEY", "KEY")
+    monkeypatch.setenv("METALPRICEAPI_KEY", "KEY")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setattr(main, "run_daily_cycle", lambda conn, api_key: None)
     monkeypatch.setattr(main, "sleep_until_next_window", lambda: 3600.0)
